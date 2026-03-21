@@ -176,7 +176,7 @@ export default function LogsPage() {
       </div>
 
       {errorLogs.length === 0 ? (
-        <div className="text-center py-24 bg-black/40 backdrop-blur-sm rounded-2xl border border-white/5 shadow-2xl fade-in">
+        <div className="text-center py-24 surface-muted rounded-2xl shadow-2xl fade-in">
           <div className="w-24 h-24 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-white/10 to-white/5 flex items-center justify-center border border-white/10 shadow-lg">
             <AlertCircle size={48} className="text-white/40" />
           </div>
@@ -198,7 +198,7 @@ export default function LogsPage() {
             return (
               <div
                 key={accountId}
-                className="bg-black/60 backdrop-blur-sm border border-white/10 rounded-2xl overflow-hidden shadow-2xl fade-in"
+                className="surface-panel rounded-2xl overflow-hidden shadow-2xl fade-in"
               >
                 {/* Hesap Header */}
                 <button
@@ -247,7 +247,7 @@ export default function LogsPage() {
                       return (
                         <div
                           key={username}
-                          className="bg-black/40 border border-white/10 rounded-xl overflow-hidden"
+                          className="surface-muted rounded-xl overflow-hidden"
                         >
                           {/* Grup Header */}
                           <button
@@ -286,7 +286,7 @@ export default function LogsPage() {
                               {groupErrors.map((log) => (
                                 <div
                                   key={log.id}
-                                  className="bg-black/60 border border-white/10 rounded-lg p-4"
+                                  className="surface-panel rounded-lg p-4"
                                 >
                                   <div className="flex items-start justify-between gap-4 mb-2">
                                     <div className="flex-1">

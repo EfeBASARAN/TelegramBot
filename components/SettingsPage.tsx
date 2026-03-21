@@ -18,7 +18,7 @@ export default function SettingsPage() {
       </div>
 
       <div className="space-y-6">
-        <div className="bg-black/60 backdrop-blur-sm border border-white/10 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
+        <div className="surface-panel rounded-2xl p-6 shadow-2xl relative overflow-hidden">
           <div className="absolute top-0 right-0 w-48 h-48 bg-white/5 rounded-full blur-3xl -mr-24 -mt-24" />
           <div className="flex items-start gap-4 mb-6 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl backdrop-blur-sm relative z-10">
             <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center border border-blue-500/30 flex-shrink-0 shadow-lg">

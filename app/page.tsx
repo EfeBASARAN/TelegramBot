@@ -118,7 +118,7 @@ export default function Home() {
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
       ctx.shadowBlur = 6 // Daha düşük shadow blur
-      ctx.shadowColor = 'rgba(255, 255, 255, 0.4)'
+      ctx.shadowColor = 'rgba(255, 255, 255, 0.15)'
       
       // Tüm çizgiyi tek seferde çiz
       let hasVisiblePoints = false
@@ -141,7 +141,7 @@ export default function Home() {
           ctx.beginPath()
           ctx.moveTo(prevPoint.x, prevPoint.y)
           ctx.lineTo(point.x, point.y)
-          ctx.strokeStyle = `rgba(255, 255, 255, ${finalOpacity * 0.85})`
+          ctx.strokeStyle = `rgba(220, 225, 230, ${finalOpacity * 0.65})`
           ctx.lineWidth = finalThickness
           ctx.stroke()
         }

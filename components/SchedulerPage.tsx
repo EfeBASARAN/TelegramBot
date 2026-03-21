@@ -555,7 +555,7 @@ export default function SchedulerPage() {
       </div>
 
       {connectedAccounts.length === 0 && (
-        <div className="mb-6 p-5 bg-black/60 backdrop-blur-sm border border-white/10 rounded-2xl fade-in shadow-xl">
+        <div className="mb-6 p-5 surface-panel rounded-2xl fade-in shadow-xl">
           <div className="flex items-start gap-4">
             <div className="w-10 h-10 rounded-lg bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center flex-shrink-0">
               <span className="text-yellow-400 text-lg font-bold">!</span>
@@ -574,7 +574,7 @@ export default function SchedulerPage() {
       )}
 
       {messageTemplates.length === 0 && (
-        <div className="mb-6 p-5 bg-black/60 backdrop-blur-sm border border-white/10 rounded-2xl fade-in shadow-xl">
+        <div className="mb-6 p-5 surface-panel rounded-2xl fade-in shadow-xl">
           <div className="flex items-start gap-4">
             <div className="w-10 h-10 rounded-lg bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center flex-shrink-0">
               <span className="text-yellow-400 text-lg font-bold">!</span>
@@ -593,7 +593,7 @@ export default function SchedulerPage() {
       )}
 
       {scheduledMessages.length === 0 ? (
-        <div className="text-center py-24 bg-black/40 backdrop-blur-sm rounded-2xl border border-white/5 shadow-2xl fade-in">
+        <div className="text-center py-24 surface-muted rounded-2xl shadow-2xl fade-in">
           <div className="w-24 h-24 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-white/10 to-white/5 flex items-center justify-center border border-white/10 shadow-lg">
             <Clock size={48} className="text-white/40" />
           </div>
@@ -617,7 +617,7 @@ export default function SchedulerPage() {
             return (
               <div
                 key={scheduledMessage.id}
-                className="bg-black/60 backdrop-blur-sm border border-white/10 rounded-xl p-4 card-hover shadow-xl fade-in electric-border relative overflow-hidden w-full"
+                className="surface-panel rounded-xl p-4 card-hover shadow-xl fade-in electric-border relative overflow-hidden w-full"
                 style={{ animationDelay: `${index * 0.05}s` }}
               >
                 <div className="absolute top-0 right-0 w-24 h-24 bg-white/5 rounded-full blur-xl -mr-12 -mt-12" />
@@ -753,8 +753,8 @@ export default function SchedulerPage() {
       )}
 
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50 p-4 fade-in">
-          <div className="bg-black/95 backdrop-blur-xl border border-white/10 rounded-2xl px-6 pt-6 pb-4 w-full max-w-xl shadow-2xl fade-in relative overflow-hidden">
+        <div className="fixed inset-0 surface-modal-overlay backdrop-blur-md flex items-center justify-center z-50 p-4 fade-in">
+          <div className="surface-modal rounded-2xl px-6 pt-6 pb-4 w-full max-w-xl shadow-2xl fade-in relative overflow-hidden">
             <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -mr-32 -mt-32" />
             <div className="absolute bottom-0 left-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -ml-32 -mb-32" />
             
@@ -826,7 +826,7 @@ export default function SchedulerPage() {
                       onChange={(e) => setUsernames(e.target.value)}
                       placeholder="kullanici1&#10;@grup_adi&#10;kullanici2"
                       rows={4}
-                      className="input-focus w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none resize-none text-sm"
+                      className="input-focus w-full px-3 py-2.5 rounded-xl text-white placeholder-white/30 focus:outline-none resize-none text-sm"
                     />
                     <p className="text-xs text-white/40 mt-2 font-medium">
                       Kullanıcılar: kullanici_adi veya @kullanici_adi · Gruplar: @grup_adi
@@ -856,7 +856,7 @@ export default function SchedulerPage() {
                           const g = groupsForPicker.find((x) => x.id === e.target.value)
                           setSelectedGroup(g ?? null)
                         }}
-                        className="input-focus w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-white focus:outline-none text-sm"
+                        className="input-focus w-full px-3 py-2.5 rounded-xl text-white focus:outline-none text-sm"
                       >
                         <option value="">Grup seçin…</option>
                         {groupsForPicker.map((g) => (
@@ -878,7 +878,7 @@ export default function SchedulerPage() {
                 <select
                   value={selectedTemplateId}
                   onChange={(e) => setSelectedTemplateId(e.target.value)}
-                  className="input-focus w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-white focus:outline-none text-sm"
+                  className="input-focus w-full px-3 py-2.5 rounded-xl text-white focus:outline-none text-sm"
                 >
                   <option value="">Şablon seçin...</option>
                   {messageTemplates.map((template) => (
@@ -901,7 +901,7 @@ export default function SchedulerPage() {
                   type="datetime-local"
                   value={scheduledAt}
                   onChange={(e) => setScheduledAt(e.target.value)}
-                  className="input-focus w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-white focus:outline-none text-sm [color-scheme:dark]"
+                  className="input-focus w-full px-3 py-2.5 rounded-xl text-white focus:outline-none text-sm [color-scheme:dark]"
                 />
               </div>
 
@@ -917,7 +917,7 @@ export default function SchedulerPage() {
                     onChange={(e) =>
                       setDelayBetweenMessages(parseInt(e.target.value) * 1000)
                     }
-                    className="input-focus w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-white focus:outline-none text-sm"
+                    className="input-focus w-full px-3 py-2.5 rounded-xl text-white focus:outline-none text-sm"
                   />
                   <p className="text-xs text-white/40 mt-1 font-medium">
                     Önerilen: 3-5 saniye
@@ -934,7 +934,7 @@ export default function SchedulerPage() {
                     onChange={(e) =>
                       setDelayBetweenAccounts(parseInt(e.target.value) * 1000)
                     }
-                    className="input-focus w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-white focus:outline-none text-sm"
+                    className="input-focus w-full px-3 py-2.5 rounded-xl text-white focus:outline-none text-sm"
                   />
                   <p className="text-xs text-white/40 mt-1 font-medium">
                     Önerilen: 5-10 saniye

@@ -171,7 +171,7 @@ export default function GroupsPage() {
       {membersPanelGroup && (
         <button
           type="button"
-          className="fixed inset-0 z-40 bg-black/55 backdrop-blur-[2px] xl:hidden"
+          className="fixed inset-0 z-40 surface-modal-overlay backdrop-blur-[2px] xl:hidden"
           onClick={closeMembersPanel}
           aria-label="Paneli kapat"
         />
@@ -246,14 +246,14 @@ export default function GroupsPage() {
           )}
 
           {selectedAccountId && !loading && groups.length === 0 && !error && !hasFetched && (
-            <div className="text-center py-16 bg-black/40 backdrop-blur-sm rounded-2xl border border-white/5">
+            <div className="text-center py-16 surface-muted rounded-2xl">
               <Hash size={48} className="mx-auto text-white/25 mb-4" />
               <p className="text-white/45 text-sm">Listeyi yenile ile grupları yükleyin.</p>
             </div>
           )}
 
           {selectedAccountId && !loading && groups.length === 0 && !error && hasFetched && (
-            <div className="text-center py-16 bg-black/40 backdrop-blur-sm rounded-2xl border border-white/5">
+            <div className="text-center py-16 surface-muted rounded-2xl">
               <Users size={48} className="mx-auto text-white/25 mb-4" />
               <p className="text-white/55 text-sm max-w-md mx-auto">
                 Bu hesabın sohbet listesinde grup, süper grup veya kanal bulunamadı (veya ilk 200 sohbet içinde
@@ -273,8 +273,8 @@ export default function GroupsPage() {
                 return (
                   <div
                     key={g.id}
-                    className={`bg-black/60 backdrop-blur-sm border rounded-xl overflow-hidden shadow-lg transition-colors ${
-                      panelActive ? 'border-cyan-500/40 ring-1 ring-cyan-500/20' : 'border-white/10'
+                    className={`surface-panel rounded-xl overflow-hidden shadow-lg transition-colors ${
+                      panelActive ? 'border-white/20 ring-1 ring-white/10' : ''
                     }`}
                   >
                     <button
@@ -283,8 +283,8 @@ export default function GroupsPage() {
                       className="w-full flex flex-col sm:flex-row sm:items-stretch gap-3 sm:gap-4 p-4 text-left hover:bg-white/[0.04] transition-colors"
                     >
                       <div className="flex items-start gap-3 min-w-0 flex-1">
-                        <div className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center border border-white/10 shrink-0">
-                          <Hash size={18} className="text-cyan-400/90" />
+                        <div className="w-10 h-10 rounded-lg bg-white/[0.06] flex items-center justify-center border border-white/10 shrink-0">
+                          <Hash size={18} className="text-slate-400" />
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
@@ -296,7 +296,7 @@ export default function GroupsPage() {
                             )}
                           </div>
                           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-white/45">
-                            <span className="text-cyan-400/90 font-semibold">{g.typeLabel}</span>
+                            <span className="text-slate-400 font-semibold">{g.typeLabel}</span>
                             {g.username && (
                               <span className="font-mono text-white/55">@{g.username}</span>
                             )}
@@ -316,7 +316,7 @@ export default function GroupsPage() {
                               </span>
                             )}
                             {g.unreadCount != null && g.unreadCount > 0 && (
-                              <span className="sm:hidden inline-flex items-center gap-1 rounded-full bg-cyan-500/20 text-cyan-300 px-2 py-0.5 font-semibold">
+                              <span className="sm:hidden inline-flex items-center gap-1 rounded-full bg-white/[0.08] text-slate-200 px-2 py-0.5 font-semibold border border-white/10">
                                 {g.unreadCount} okunmamış
                               </span>
                             )}
@@ -360,7 +360,7 @@ export default function GroupsPage() {
                       <div className="flex items-center justify-center sm:justify-end gap-3 shrink-0 sm:flex-col sm:items-end sm:min-w-[5.5rem]">
                         {g.unreadCount != null && g.unreadCount > 0 && (
                           <span
-                            className="hidden sm:inline-flex items-center justify-center min-w-[1.75rem] h-7 px-2 rounded-full bg-cyan-500/25 text-cyan-200 text-xs font-bold border border-cyan-500/30"
+                            className="hidden sm:inline-flex items-center justify-center min-w-[1.75rem] h-7 px-2 rounded-full bg-white/[0.08] text-slate-200 text-xs font-bold border border-white/12"
                             title="Okunmamış"
                           >
                             {g.unreadCount > 99 ? '99+' : g.unreadCount}
@@ -393,7 +393,7 @@ export default function GroupsPage() {
                           {g.username && (
                             <div>
                               <dt className="text-white/40 text-xs font-medium mb-0.5">Kullanıcı adı</dt>
-                              <dd className="font-mono text-cyan-300/90">@{g.username}</dd>
+                              <dd className="font-mono text-slate-300">@{g.username}</dd>
                             </div>
                           )}
                         </dl>
@@ -426,7 +426,7 @@ export default function GroupsPage() {
         {/* Sağ panel: üyeler */}
         {membersPanelGroup && (
           <aside
-            className="fixed xl:static inset-y-0 right-0 z-50 xl:z-auto h-full max-h-screen xl:max-h-[calc(100vh-7rem)] w-full max-w-md xl:max-w-none xl:w-[min(420px,38%)] xl:min-w-[320px] xl:max-w-[440px] xl:h-fit shrink-0 flex flex-col rounded-none xl:rounded-2xl border-l border-white/10 bg-zinc-950/95 xl:bg-black/75 backdrop-blur-xl shadow-2xl overflow-hidden xl:sticky xl:top-24"
+            className="fixed xl:static inset-y-0 right-0 z-50 xl:z-auto h-full max-h-screen xl:max-h-[calc(100vh-7rem)] w-full max-w-md xl:max-w-none xl:w-[min(420px,38%)] xl:min-w-[320px] xl:max-w-[440px] xl:h-fit shrink-0 flex flex-col rounded-none xl:rounded-2xl border-l border-white/[0.08] bg-zinc-950/96 xl:bg-zinc-950/88 backdrop-blur-xl shadow-2xl overflow-hidden xl:sticky xl:top-24"
             role="dialog"
             aria-labelledby="members-panel-title"
           >
@@ -435,7 +435,7 @@ export default function GroupsPage() {
                 <h3 id="members-panel-title" className="font-bold text-white text-base leading-snug truncate">
                   {membersPanelGroup.title}
                 </h3>
-                <p className="text-xs text-cyan-400/90 mt-0.5">{membersPanelGroup.typeLabel}</p>
+                <p className="text-xs text-slate-400 mt-0.5">{membersPanelGroup.typeLabel}</p>
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 <button
@@ -461,7 +461,7 @@ export default function GroupsPage() {
             <div className="flex-1 overflow-y-auto min-h-0 p-3">
               {panelLoading && (
                 <div className="flex flex-col items-center justify-center py-16 gap-3 text-white/50">
-                  <Loader2 size={28} className="animate-spin text-cyan-400/80" />
+                  <Loader2 size={28} className="animate-spin text-slate-400" />
                   <span className="text-sm">Üyeler yükleniyor…</span>
                 </div>
               )}
@@ -475,7 +475,7 @@ export default function GroupsPage() {
               {!panelLoading && !panelErr && panelMembers && panelMembers.length > 0 && (
                 <div className="rounded-lg border border-white/10 overflow-hidden">
                   <table className="w-full text-left text-xs">
-                    <thead className="sticky top-0 bg-zinc-900/95 text-white/50 font-semibold border-b border-white/10 backdrop-blur-sm">
+                    <thead className="sticky top-0 bg-zinc-900/95 text-slate-500 font-semibold border-b border-white/10 backdrop-blur-sm">
                       <tr>
                         <th className="p-2.5 pl-3">Ad</th>
                         <th className="p-2.5">@kullanıcı</th>
@@ -491,7 +491,7 @@ export default function GroupsPage() {
                               <span className="ml-1 text-[10px] text-violet-400 font-medium">bot</span>
                             )}
                           </td>
-                          <td className="p-2.5 font-mono text-cyan-300/85">
+                          <td className="p-2.5 font-mono text-slate-300">
                             {m.username ? `@${m.username}` : '—'}
                           </td>
                           <td className="p-2.5 pr-3 font-mono text-white/45">{m.id}</td>
@@ -509,7 +509,7 @@ export default function GroupsPage() {
               )}
             </div>
 
-            <div className="p-3 border-t border-white/10 text-[11px] text-white/35 bg-black/40">
+            <div className="p-3 border-t border-white/[0.06] text-[11px] text-white/40 bg-black/30">
               En fazla 200 üye · Telegram API kuralları geçerlidir
             </div>
           </aside>

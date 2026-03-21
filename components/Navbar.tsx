@@ -54,7 +54,7 @@ export default function Navbar() {
   }, [scheduledMessages, messageTemplates])
 
   return (
-    <nav className="h-[4.25rem] bg-black/65 backdrop-blur-xl border-b border-white/[0.08] flex items-center justify-between px-6 relative z-20 shadow-[0_1px_0_0_rgba(34,211,238,0.06)]">
+    <nav className="h-[4.25rem] bg-zinc-950/90 backdrop-blur-xl border-b border-white/[0.08] flex items-center justify-between px-6 relative z-20 shadow-[0_1px_0_0_rgba(255,255,255,0.06)]">
       <div className="flex items-center gap-3 flex-1 overflow-hidden min-w-0">
         <BrandLogo size="sm" />
         <div className="hidden md:flex flex-col min-w-0">
@@ -64,10 +64,10 @@ export default function Navbar() {
         
         {/* Yaklaşan Mesaj Kayan Yazı */}
         {upcomingMessage && (
-          <div className="hidden lg:flex items-center gap-2 ml-4 px-3 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg overflow-hidden flex-1 min-w-0">
-            <Clock size={14} className="text-blue-400 flex-shrink-0" />
+          <div className="hidden lg:flex items-center gap-2 ml-4 px-3 py-1.5 bg-white/[0.06] border border-white/10 rounded-lg overflow-hidden flex-1 min-w-0">
+            <Clock size={14} className="text-slate-400 flex-shrink-0" />
             <div className="overflow-hidden flex-1">
-              <div className="scrolling-text text-xs font-semibold text-blue-400 whitespace-nowrap">
+              <div className="scrolling-text text-xs font-semibold text-slate-300 whitespace-nowrap">
                 Sıradaki gönderim: {upcomingMessage}
               </div>
             </div>

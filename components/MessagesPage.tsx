@@ -82,7 +82,7 @@ export default function MessagesPage() {
       </div>
 
       {messageTemplates.length === 0 ? (
-        <div className="text-center py-24 bg-black/40 backdrop-blur-sm rounded-2xl border border-white/5 shadow-2xl fade-in">
+        <div className="text-center py-24 surface-muted rounded-2xl shadow-2xl fade-in">
           <div className="w-24 h-24 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-white/10 to-white/5 flex items-center justify-center border border-white/10 shadow-lg">
             <MessageSquare size={48} className="text-white/40" />
           </div>
@@ -98,7 +98,7 @@ export default function MessagesPage() {
           {messageTemplates.map((template, index) => (
             <div
               key={template.id}
-              className="bg-black/60 backdrop-blur-sm border border-white/10 rounded-2xl p-6 card-hover shadow-2xl fade-in electric-border relative overflow-hidden"
+              className="surface-panel rounded-2xl p-6 card-hover shadow-2xl fade-in electric-border relative overflow-hidden"
               style={{ animationDelay: `${index * 0.05}s` }}
             >
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full blur-2xl -mr-16 -mt-16" />
@@ -129,8 +129,8 @@ export default function MessagesPage() {
       )}
 
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50 p-4 fade-in">
-          <div className="bg-black/95 backdrop-blur-xl border border-white/10 rounded-2xl p-8 w-full max-w-2xl shadow-2xl fade-in relative overflow-hidden">
+        <div className="fixed inset-0 surface-modal-overlay backdrop-blur-md flex items-center justify-center z-50 p-4 fade-in">
+          <div className="surface-modal rounded-2xl p-8 w-full max-w-2xl shadow-2xl fade-in relative overflow-hidden">
             <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -mr-32 -mt-32" />
             <div className="absolute bottom-0 left-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -ml-32 -mb-32" />
             
@@ -147,7 +147,7 @@ export default function MessagesPage() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Örn: Hoşgeldin Mesajı"
-                  className="input-focus w-full px-4 py-3.5 bg-black/40 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none"
+                  className="input-focus w-full px-4 py-3.5 rounded-xl text-white placeholder-white/30 focus:outline-none"
                 />
               </div>
               <div>
@@ -159,7 +159,7 @@ export default function MessagesPage() {
                   onChange={(e) => setContent(e.target.value)}
                   placeholder="Mesaj içeriğini buraya yazın..."
                   rows={8}
-                  className="input-focus w-full px-4 py-3.5 bg-black/40 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none resize-none"
+                  className="input-focus w-full px-4 py-3.5 rounded-xl text-white placeholder-white/30 focus:outline-none resize-none"
                 />
               </div>
               <div className="flex gap-3">

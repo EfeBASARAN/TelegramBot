@@ -17,7 +17,7 @@ export default function BrandLogo({ size = 'md', className = '', withRing = true
   const px = sizeMap[size]
   return (
     <div
-      className={`relative flex-shrink-0 rounded-2xl overflow-hidden ${withRing ? 'ring-2 ring-white/15 shadow-lg shadow-cyan-500/10' : ''} ${className}`}
+      className={`relative flex-shrink-0 rounded-2xl overflow-hidden ${withRing ? 'ring-2 ring-white/15 shadow-lg shadow-black/20' : ''} ${className}`}
       style={{ width: px, height: px }}
     >
       <Image
@@ -29,7 +29,7 @@ export default function BrandLogo({ size = 'md', className = '', withRing = true
         priority
         unoptimized
       />
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-cyan-400/5 opacity-60" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-white/[0.03] opacity-60" />
     </div>
   )
 }

@@ -417,7 +417,7 @@ export default function AccountsPage() {
 
 
       {accounts.length === 0 ? (
-        <div className="text-center py-24 bg-black/40 backdrop-blur-sm rounded-2xl border border-white/5 shadow-2xl fade-in">
+        <div className="text-center py-24 surface-muted rounded-2xl shadow-2xl fade-in">
           <div className="w-24 h-24 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-white/10 to-white/5 flex items-center justify-center border border-white/10 shadow-lg">
             <Phone size={48} className="text-white/40" />
           </div>
@@ -433,7 +433,7 @@ export default function AccountsPage() {
           {accounts.map((account, index) => (
             <div
               key={account.id}
-              className="bg-black/60 backdrop-blur-sm border border-white/10 rounded-2xl p-6 card-hover shadow-2xl fade-in electric-border relative overflow-hidden"
+              className="surface-panel rounded-2xl p-6 card-hover shadow-2xl fade-in electric-border relative overflow-hidden"
               style={{ animationDelay: `${index * 0.05}s` }}
             >
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full blur-2xl -mr-16 -mt-16" />
@@ -536,8 +536,8 @@ export default function AccountsPage() {
       )}
 
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50 p-4 fade-in">
-          <div className="bg-black/95 backdrop-blur-xl border border-white/10 rounded-2xl p-8 w-full max-w-md shadow-2xl fade-in relative overflow-hidden">
+        <div className="fixed inset-0 surface-modal-overlay backdrop-blur-md flex items-center justify-center z-50 p-4 fade-in">
+          <div className="surface-modal rounded-2xl p-8 w-full max-w-md shadow-2xl fade-in relative overflow-hidden">
             <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -mr-32 -mt-32" />
             <div className="absolute bottom-0 left-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -ml-32 -mb-32" />
             
@@ -597,7 +597,7 @@ export default function AccountsPage() {
                         value={apiId}
                         onChange={(e) => setApiId(e.target.value)}
                         placeholder="12345678"
-                        className="input-focus w-full px-4 py-3.5 pr-12 bg-black/40 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none font-mono text-sm relative z-10"
+                        className="input-focus w-full px-4 py-3.5 pr-12 rounded-xl text-white placeholder-white/30 focus:outline-none font-mono text-sm relative z-10"
                         disabled={isConnecting}
                       />
                       <button
@@ -623,7 +623,7 @@ export default function AccountsPage() {
                         value={apiHash}
                         onChange={(e) => setApiHash(e.target.value)}
                         placeholder="abcdef1234567890abcdef1234567890"
-                        className="input-focus w-full px-4 py-3.5 pr-12 bg-black/40 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none font-mono text-sm relative z-10"
+                        className="input-focus w-full px-4 py-3.5 pr-12 rounded-xl text-white placeholder-white/30 focus:outline-none font-mono text-sm relative z-10"
                         disabled={isConnecting}
                       />
                       <button
@@ -679,7 +679,7 @@ export default function AccountsPage() {
                       value={phoneNumber}
                       onChange={(e) => setPhoneNumber(e.target.value)}
                       placeholder="+90 555 123 4567"
-                      className="input-focus w-full px-4 py-3.5 bg-black/40 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none relative z-10"
+                      className="input-focus w-full px-4 py-3.5 rounded-xl text-white placeholder-white/30 focus:outline-none relative z-10"
                       onKeyPress={(e) => e.key === 'Enter' && handleSendCode()}
                       disabled={isConnecting}
                     />
@@ -724,7 +724,7 @@ export default function AccountsPage() {
                         setCode(value)
                       }}
                       placeholder="84431"
-                      className="input-focus w-full px-4 py-3.5 bg-black/40 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none text-center text-2xl font-bold tracking-widest relative z-10"
+                      className="input-focus w-full px-4 py-3.5 rounded-xl text-white placeholder-white/30 focus:outline-none text-center text-2xl font-bold tracking-widest relative z-10"
                       onKeyPress={(e) => e.key === 'Enter' && handleVerifyCode()}
                       disabled={isConnecting}
                       maxLength={5}
@@ -788,7 +788,7 @@ export default function AccountsPage() {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="Şifrenizi girin"
-                      className="input-focus w-full px-4 py-3.5 bg-black/40 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none relative z-10"
+                      className="input-focus w-full px-4 py-3.5 rounded-xl text-white placeholder-white/30 focus:outline-none relative z-10"
                       onKeyPress={(e) => e.key === 'Enter' && handleVerifyPassword()}
                       disabled={isConnecting}
                     />
