@@ -1003,6 +1003,86 @@ class TelegramManager {
   }
 
   /**
+   * Diyalog listesindeki tüm temel gruplar, süper gruplar ve abone olunan kanallardan çıkar.
+   * (Liste sınırı: son ~500 diyalog; çok fazla sohbet varsa tamamı görünmeyebilir.)
+   * Kanal/grup sahibi olduğunuz yerlerde Telegram reddedebilir — failedCount artar.
+   */
+  async leaveAllJoinedGroups(
+    accountId: string,
+    sessionString?: string,
+    phoneNumber?: string,
+    apiId?: string,
+    apiHash?: string
+  ): Promise<{
+    success: boolean
+    error?: string
+    leftCount?: number
+    failedCount?: number
+  }> {
+    try {
+      const ready = await this.ensureClientForAccount(
+        accountId,
+        sessionString,
+        phoneNumber,
+        apiId,
+        apiHash
+      )
+      if (!ready.ok) {
+        return { success: false, error: ready.error }
+      }
+      const client = ready.client
+      const dialogs = await client.getDialogs({ limit: 500 })
+
+      let leftCount = 0
+      let failedCount = 0
+
+      for (const d of dialogs) {
+        const entity = d.entity
+        if (!entity) continue
+        if (entity instanceof Api.User) continue
+        if (entity instanceof Api.ChatForbidden || entity instanceof Api.ChannelForbidden) continue
+
+        try {
+          if (entity instanceof Api.Channel) {
+            if (entity.left) continue
+            if (entity.accessHash == null) {
+              failedCount++
+              continue
+            }
+            await client.invoke(
+              new Api.channels.LeaveChannel({
+                channel: new Api.InputChannel({
+                  channelId: returnBigInt(entity.id),
+                  accessHash: returnBigInt(entity.accessHash),
+                }),
+              })
+            )
+            leftCount++
+          } else if (entity instanceof Api.Chat) {
+            await client.invoke(
+              new Api.messages.DeleteChatUser({
+                chatId: returnBigInt(entity.id),
+                userId: new Api.InputUserSelf(),
+              })
+            )
+            leftCount++
+          }
+        } catch {
+          failedCount++
+        }
+        await new Promise((r) => setTimeout(r, 120))
+      }
+
+      return { success: true, leftCount, failedCount }
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || error.errorMessage || 'Gruplardan çıkılamadı',
+      }
+    }
+  }
+
+  /**
    * Grup / süper grup / kanal üyelerini listeler (Telegram izin ve gizlilik kurallarına tabidir).
    */
   async getGroupParticipants(

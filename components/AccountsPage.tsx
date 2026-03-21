@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, Power, PowerOff, Phone, Eye, EyeOff, FileSpreadsheet } from 'lucide-react'
+import { Plus, Trash2, Power, PowerOff, Phone, Eye, EyeOff, FileSpreadsheet, UserMinus } from 'lucide-react'
 import { useAppStore, TelegramAccount } from '@/store/appStore'
 import { exportRowsToExcel, sanitizeExcelFilename } from '@/lib/excelExport'
 import { telegramManager } from '@/lib/telegram'
@@ -82,6 +82,7 @@ export default function AccountsPage() {
   const [visiblePhones, setVisiblePhones] = useState<Set<string>>(new Set())
   const [showInputApiId, setShowInputApiId] = useState(false)
   const [showInputApiHash, setShowInputApiHash] = useState(false)
+  const [leavingAllGroupsId, setLeavingAllGroupsId] = useState<string | null>(null)
 
   const resetModal = () => {
     setApiId('')
@@ -385,6 +386,41 @@ export default function AccountsPage() {
     updateAccount(accountId, { isConnected: false })
   }
 
+  const handleLeaveAllGroups = async (account: TelegramAccount) => {
+    if (
+      !confirm(
+        'Bu hesabın katıldığı tüm gruplar, süper gruplar ve abone olunan kanallardan çıkılacak (sohbet listesinde görünen son ~500 diyalog). Yönetici olduğunuz veya Telegram’ın izin vermediği yerlerde çıkış başarısız olabilir. Devam edilsin mi?'
+      )
+    ) {
+      return
+    }
+    setLeavingAllGroupsId(account.id)
+    try {
+      const aid = account.apiId || apiConfig?.apiId
+      const ahash = account.apiHash || apiConfig?.apiHash
+      const res = await telegramManager.leaveAllJoinedGroups(
+        account.id,
+        account.sessionString,
+        account.phoneNumber,
+        aid,
+        ahash
+      )
+      if (!res.success) {
+        pushToast(res.error || 'İşlem başarısız', 'error')
+        return
+      }
+      const left = res.leftCount ?? 0
+      const failed = res.failedCount ?? 0
+      if (failed > 0) {
+        pushToast(`${left} yerden çıkıldı, ${failed} yerde başarısız (sahiplik / kısıt).`, 'info')
+      } else {
+        pushToast(`${left} gruptan/kanaldan çıkıldı.`, 'success')
+      }
+    } finally {
+      setLeavingAllGroupsId(null)
+    }
+  }
+
   const handleDelete = async (accountId: string) => {
     if (confirm('Bu hesabı silmek istediğinize emin misiniz?')) {
       const account = accounts.find((a) => a.id === accountId)
@@ -557,12 +593,24 @@ export default function AccountsPage() {
                       : 'Bağlan'}
                   </button>
                 ) : (
-                  <button
-                    onClick={() => handleDisconnect(account.id)}
-                    className="w-full px-4 py-3 bg-white/10 hover:bg-white/15 text-white rounded-xl text-sm font-bold border border-white/10 hover:border-white/20 transition-all shadow-lg"
-                  >
-                    Bağlantıyı Kes
-                  </button>
+                  <>
+                    <button
+                      onClick={() => handleDisconnect(account.id)}
+                      className="w-full px-4 py-3 bg-white/10 hover:bg-white/15 text-white rounded-xl text-sm font-bold border border-white/10 hover:border-white/20 transition-all shadow-lg"
+                    >
+                      Bağlantıyı Kes
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleLeaveAllGroups(account)}
+                      disabled={leavingAllGroupsId === account.id}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-amber-500/10 hover:bg-amber-500/15 text-amber-100 rounded-xl text-sm font-bold border border-amber-500/25 hover:border-amber-400/35 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Diyalog listesindeki gruplar, süper gruplar ve kanallar"
+                    >
+                      <UserMinus size={18} className="shrink-0" />
+                      {leavingAllGroupsId === account.id ? 'Gruplardan çıkılıyor...' : 'Tüm gruplardan çık'}
+                    </button>
+                  </>
                 )}
               </div>
             </div>
