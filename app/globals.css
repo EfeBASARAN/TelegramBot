@@ -41,7 +41,8 @@ body::before {
     radial-gradient(circle at 15% 40%, rgba(18, 20, 24, 0.45) 0%, transparent 48%),
     radial-gradient(circle at 85% 72%, rgba(12, 14, 18, 0.4) 0%, transparent 50%),
     linear-gradient(180deg, #050506 0%, #08090b 42%, #050506 100%);
-  z-index: 0;
+  /* İçerik (lisans ekranı vb.) her zaman üstte kalsın; bazı ortamlarda z-index:0 üstte kalabiliyordu */
+  z-index: -1;
   pointer-events: none;
 }
 

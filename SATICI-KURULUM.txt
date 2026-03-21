@@ -1,0 +1,63 @@
+================================================================================
+EB TELEGRAM OTO MESAJ — SATICI / LİSANS
+================================================================================
+
+AKIŞ (ÖZET)
+  1) Sen: npm run satis  →  Satis/ klasörü müşteriye verilecek paket olur (RAR/ZIP).
+  2) Müşteri: CALISTIR.bat veya node server.js → tarayıcıda makine kodunu görür, sana yazar (WhatsApp vb.).
+  3) Sen: lisans üret (Windows’ta bayraklar bazen gitmez — aşağıdaki “kolay” satırı kullan)
+  4) Müşteri: gönderdiğin tek satır lisansı yapıştırır; süre bitene kadar kullanır.
+
+--------------------------------------------------------------------------------
+1) BİR KEZ: ANAHTAR ÇİFTİ (KENDİ PC’NDE)
+   npm run license:keys
+
+   Oluşur:
+     scripts/license-private.pem   → SADECE SENDE. MÜŞTERİYE ASLA VERME.
+     lib/licensePublicKey.ts       → Uygulamaya gömülür; build ile pakete gider.
+
+--------------------------------------------------------------------------------
+2) MÜŞTERİ PAKETİNİ ÜRET
+   npm run satis
+
+   Bu komut: build alır ve Satis/ klasörünü doldurur (standalone + static + public +
+   CALISTIR.bat + OKU.txt). Müşteriye yalnızca Satis/ içeriğini RAR/ZIP ile gönder.
+
+--------------------------------------------------------------------------------
+3) MÜŞTERİ TARAFI
+   - Node.js LTS kurulu olsun (https://nodejs.org).
+   - RAR’ı açsın, CALISTIR.bat’a çift tıklasın (veya OKU.txt).
+   - Pencerede "Ready" görününce tarayıcıda http://localhost:3000 açsın (otomatik açılmaz).
+   - Lisans ekranında makine kodunu kopyalayıp sana göndersin.
+
+--------------------------------------------------------------------------------
+4) LİSANS ÜRET (SENİN PC’NDE)
+   Windows’ta npm bazen --machine-id iletmez; o zaman (önerilen):
+     npm run license:issue -- MÜŞTERİNİN_64_HEX_KODU 10080
+   veya doğrudan:
+     node scripts/issue-license.mjs MÜŞTERİNİN_64_HEX_KODU 10080
+   Klasik (Linux/Mac veya npm düzgün iletiyorsa):
+     npm run license:issue -- --machine-id MÜŞTERİNİN_64_HEX_KODU --minutes 10080
+
+   Örnek 1 dakikalık test:
+     npm run license:issue -- MÜŞTERİNİN_64_HEX_KODU 1
+
+   Örnek 3 dakikalık test:
+     npm run license:issue -- MÜŞTERİNİN_64_HEX_KODU 3
+
+   Çıkan TEK SATIR metni müşteriye gönder; uygulamada yapıştırır.
+
+--------------------------------------------------------------------------------
+5) MÜŞTERİYE ASLA GÖNDERME
+   license-private.pem, kaynak kod (satış modeline göre), scripts/issue-license.mjs
+
+--------------------------------------------------------------------------------
+6) GÜVENLİK
+   Lisans tarayıcıda doğrulanır; tam kırılamazlık yoktur. Amaç dürüst kullanım ve
+   paylaşımı zorlaştırmaktır.
+
+--------------------------------------------------------------------------------
+7) SÜRE BİTİNCE
+   Uygulama kilitlenir; yeni lisans için tekrar license:issue gerekir.
+
+================================================================================

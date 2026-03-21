@@ -5,6 +5,22 @@ import { Users, MessageSquare, Clock, Settings, AlertCircle, Hash } from 'lucide
 import { useAppStore } from '@/store/appStore'
 import BrandLogo from '@/components/BrandLogo'
 import { BRAND_NAME, BRAND_TAGLINE, BRAND_VERSION } from '@/lib/brand'
+import { LICENSE_STORAGE_KEY } from '@/lib/licenseConstants'
+import { getMachineId } from '@/lib/machineFingerprint'
+import { verifyLicenseToken } from '@/lib/licenseVerify'
+
+function formatLicenseRemaining(ms: number): string {
+  if (ms <= 0) return '0 sn'
+  const totalSec = Math.floor(ms / 1000)
+  const days = Math.floor(totalSec / 86400)
+  const h = Math.floor((totalSec % 86400) / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+  if (days > 0) return `${days} gün ${h} sa ${m} dk ${s} sn`
+  if (h > 0) return `${h} sa ${m} dk ${s} sn`
+  if (m > 0) return `${m} dk ${s} sn`
+  return `${s} sn`
+}
 
 export default function Sidebar() {
   const currentPage = useAppStore((state) => state.currentPage)
@@ -12,6 +28,7 @@ export default function Sidebar() {
   const messageTemplates = useAppStore((state) => state.messageTemplates)
   const setCurrentPage = useAppStore((state) => state.setCurrentPage)
   const [upcomingMessage, setUpcomingMessage] = useState<string | null>(null)
+  const [licenseRemaining, setLicenseRemaining] = useState<string | null>(null)
 
   // Yaklaşan mesajları bul ve kayan yazı oluştur
   useEffect(() => {
@@ -50,6 +67,32 @@ export default function Sidebar() {
 
     return () => clearInterval(interval)
   }, [scheduledMessages, messageTemplates])
+
+  useEffect(() => {
+    let cancelled = false
+    const tick = async () => {
+      if (typeof window === 'undefined') return
+      const raw = localStorage.getItem(LICENSE_STORAGE_KEY)
+      if (!raw?.trim()) {
+        if (!cancelled) setLicenseRemaining(null)
+        return
+      }
+      const mid = await getMachineId()
+      const result = await verifyLicenseToken(raw.trim(), mid)
+      if (cancelled) return
+      if (!result.ok) {
+        setLicenseRemaining(null)
+        return
+      }
+      setLicenseRemaining(formatLicenseRemaining(result.payload.expiresAt - Date.now()))
+    }
+    void tick()
+    const id = window.setInterval(() => void tick(), 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [])
 
   const menuItems = [
     { id: 'settings', label: 'API rehberi', icon: Settings },
@@ -128,11 +171,21 @@ export default function Sidebar() {
             </div>
           </div>
         )}
-        <div className="flex items-center justify-center gap-2">
-          <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 px-2 py-0.5 rounded-md bg-white/[0.06] border border-white/10">
-            Pro
-          </span>
-          <span className="text-xs text-white/35 font-medium tabular-nums">v{BRAND_VERSION}</span>
+        <div className="flex flex-col items-center gap-1.5">
+          <div className="flex items-center justify-center gap-2">
+            <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 px-2 py-0.5 rounded-md bg-white/[0.06] border border-white/10">
+              Pro
+            </span>
+            <span className="text-xs text-white/35 font-medium tabular-nums">v{BRAND_VERSION}</span>
+          </div>
+          {licenseRemaining !== null && (
+            <p className="text-center text-[10px] leading-snug text-emerald-200/85 font-medium tabular-nums px-1">
+              <span className="block text-white/40 font-normal normal-case tracking-normal mb-0.5">
+                Lisansınızın bitmesine kalan süre
+              </span>
+              {licenseRemaining}
+            </p>
+          )}
         </div>
       </div>
     </aside>

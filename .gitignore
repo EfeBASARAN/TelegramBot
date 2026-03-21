@@ -15,6 +15,9 @@
 # production
 /build
 
+# müşteri paketi (build sonrası kopyalanır; RAR ile paylaşılır)
+/Satis/
+
 # misc
 .DS_Store
 *.pem

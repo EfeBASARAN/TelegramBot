@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { Plus_Jakarta_Sans } from 'next/font/google'
+import LicenseGate from '@/components/LicenseGate'
 import './globals.css'
 
 const plusJakarta = Plus_Jakarta_Sans({
@@ -21,7 +22,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="tr" className={plusJakarta.variable}>
-      <body className="font-sans antialiased">{children}</body>
+      <body className="font-sans antialiased">
+        <LicenseGate>{children}</LicenseGate>
+      </body>
     </html>
   )
 }

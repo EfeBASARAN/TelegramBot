@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  /** Tek klasörde çalıştırılabilir paket: `.next/standalone` + `public` kopyası (SATICI-KURULUM.txt) */
+  output: 'standalone',
   experimental: {
     serverActions: true,
   },

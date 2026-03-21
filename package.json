@@ -6,7 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "license:keys": "node scripts/generate-license-keys.mjs",
+    "license:issue": "node scripts/issue-license.mjs",
+    "satis": "npm run build && node scripts/pack-satis.mjs",
+    "satis:pack": "npm run satis"
   },
   "dependencies": {
     "date-fns": "^2.30.0",
