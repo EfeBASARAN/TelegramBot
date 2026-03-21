@@ -3,6 +3,7 @@ import { StringSession } from 'telegram/sessions'
 import { Api } from 'telegram'
 import { returnBigInt } from 'telegram/Helpers'
 import { formatUserFacingTelegramError } from './telegramErrorMessages'
+import { assertLicenseActive } from './licenseRuntime'
 
 /** Gruplar / süper gruplar / kanallar listesi için özet bilgi */
 export interface JoinedGroupInfo {
@@ -201,6 +202,12 @@ class TelegramManager {
   private apiId: number = 0
   private apiHash: string = ''
 
+  /** Arayüz patch’lenmiş olsa bile Telegram API yolunu kilitlemek için */
+  private async requireLicenseOrError(): Promise<string | null> {
+    const r = await assertLicenseActive()
+    return r.ok ? null : r.reason
+  }
+
   setApiConfig(apiId: string, apiHash: string) {
     this.apiId = parseInt(apiId) || 0
     this.apiHash = apiHash || ''
@@ -221,6 +228,10 @@ class TelegramManager {
     error?: string
   }> {
     try {
+      const licErr = await this.requireLicenseOrError()
+      if (licErr) {
+        return { success: false, error: licErr }
+      }
       if (!this.apiId || !this.apiHash) {
         return {
           success: false,
@@ -287,6 +298,10 @@ class TelegramManager {
     requiresPassword?: boolean
   }> {
     try {
+      const licErr = await this.requireLicenseOrError()
+      if (licErr) {
+        return { success: false, error: licErr }
+      }
       if (!this.apiId || !this.apiHash) {
         return {
           success: false,
@@ -471,6 +486,10 @@ class TelegramManager {
     apiId?: string,
     apiHash?: string
   ): Promise<{ success: boolean; error?: string }> {
+    const licErr = await this.requireLicenseOrError()
+    if (licErr) {
+      return { success: false, error: licErr }
+    }
     console.log('📨 ========== sendMessage BAŞLADI ==========')
     console.log('📨 Parametreler:', { 
       accountId, 
@@ -862,6 +881,10 @@ class TelegramManager {
     apiId?: string,
     apiHash?: string
   ): Promise<{ ok: true; client: TelegramClient } | { ok: false; error: string }> {
+    const licErr = await this.requireLicenseOrError()
+    if (licErr) {
+      return { ok: false, error: licErr }
+    }
     if (apiId && apiHash) {
       this.setApiConfig(apiId, apiHash)
     }
@@ -1082,6 +1105,10 @@ class TelegramManager {
   }
 
   async getAccountInfo(accountId: string): Promise<any> {
+    const licErr = await this.requireLicenseOrError()
+    if (licErr) {
+      return null
+    }
     const wrapper = this.clients.get(accountId)
     if (!wrapper || !wrapper.isConnected) {
       return null

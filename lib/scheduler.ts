@@ -1,3 +1,4 @@
+import { assertLicenseActive } from './licenseRuntime'
 import { telegramManager, memberToSendTarget } from './telegram'
 import { memberDisplayLabel, formatRecipientDisplayLabel } from './recipientLabels'
 import { buildSchedulerErrorLogParts, buildSchedulerSuccessLogParts } from './errorLogHelpers'
@@ -31,6 +32,12 @@ class MessageScheduler {
     /** executeMessage tamamen çökünce (ör. grup üyeleri alınamadı) */
     onExecutionError?: (error: unknown, messageId: string) => void
   ): Promise<void> {
+    const lic = await assertLicenseActive()
+    if (!lic.ok) {
+      console.warn('⚠️ Zamanlayıcı: lisans yok veya geçersiz:', lic.reason)
+      return
+    }
+
     console.log('🔵 scheduleMessage çağrıldı:', scheduledMessage.id)
     
     if (this.activeJobs.get(scheduledMessage.id)) {
@@ -137,6 +144,12 @@ class MessageScheduler {
       hint?: string
     }) => void
   ): Promise<void> {
+    const lic = await assertLicenseActive()
+    if (!lic.ok) {
+      console.warn('⚠️ executeMessage: lisans yok veya geçersiz:', lic.reason)
+      return
+    }
+
     console.log('🚀 ========== executeMessage BAŞLADI ==========')
     console.log('🚀 Mesaj ID:', scheduledMessage.id)
     
