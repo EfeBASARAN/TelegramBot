@@ -54,10 +54,14 @@ export interface StoredErrorLog {
   accountId: string
   accountPhoneNumber?: string
   username: string
+  recipientDisplayName?: string
   message: string // error veya success mesajı
   timestamp: string // ISO string
   logType: 'error' | 'success' | 'info'
-  errorType?: 'rate_limit' | 'banned' | 'connection' | 'other' // Sadece error için
+  errorType?: 'rate_limit' | 'banned' | 'connection' | 'peer' | 'other' // Sadece error için
+  summary?: string
+  detail?: string
+  hint?: string
 }
 
 // Accounts

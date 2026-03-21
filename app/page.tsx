@@ -9,6 +9,7 @@ import SchedulerPage from '@/components/SchedulerPage'
 import SettingsPage from '@/components/SettingsPage'
 import LogsPage from '@/components/LogsPage'
 import GroupsPage from '@/components/GroupsPage'
+import ToastStack from '@/components/ToastStack'
 import { useAppStore } from '@/store/appStore'
 import { telegramManager } from '@/lib/telegram'
 
@@ -284,6 +285,7 @@ export default function Home() {
           {renderPage()}
         </main>
       </div>
+      <ToastStack />
     </div>
   )
 }

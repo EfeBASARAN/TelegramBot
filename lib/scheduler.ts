@@ -1,4 +1,7 @@
 import { telegramManager, memberToSendTarget } from './telegram'
+import { memberDisplayLabel, formatRecipientDisplayLabel } from './recipientLabels'
+import { buildSchedulerErrorLogParts, buildSchedulerSuccessLogParts } from './errorLogHelpers'
+import { formatUserFacingTelegramError } from './telegramErrorMessages'
 import { ScheduledMessage } from '@/store/appStore'
 
 class MessageScheduler {
@@ -12,7 +15,21 @@ class MessageScheduler {
     /** done: executeMessage bittiğinde true (kısmi başarı dahil — UI isActive kapatır) */
     onProgress?: (id: string, sent: number, total: number, done?: boolean) => void,
     getAccountInfo?: (accountId: string) => { sessionString?: string; phoneNumber?: string } | undefined,
-    addErrorLog?: (log: { accountId: string; accountPhoneNumber?: string; username: string; message: string; timestamp: Date; logType: 'error' | 'success' | 'info'; errorType?: 'rate_limit' | 'banned' | 'connection' | 'other' }) => void
+    addErrorLog?: (log: {
+      accountId: string
+      accountPhoneNumber?: string
+      username: string
+      recipientDisplayName?: string
+      message: string
+      timestamp: Date
+      logType: 'error' | 'success' | 'info'
+      errorType?: 'rate_limit' | 'banned' | 'connection' | 'peer' | 'other'
+      summary?: string
+      detail?: string
+      hint?: string
+    }) => void,
+    /** executeMessage tamamen çökünce (ör. grup üyeleri alınamadı) */
+    onExecutionError?: (error: unknown, messageId: string) => void
   ): Promise<void> {
     console.log('🔵 scheduleMessage çağrıldı:', scheduledMessage.id)
     
@@ -38,24 +55,30 @@ class MessageScheduler {
     })
 
     // Zamanı geçmişse veya çok yakınsa hemen gönder
-    if (delay <= 100) { // 100ms içindeyse hemen gönder
+    if (delay <= 100) {
+      // 100ms içindeyse hemen gönder
       console.log('⚡ Zaman geldi veya geçti, hemen gönderiliyor:', scheduledMessage.id)
-      this.executeMessage(scheduledMessage, getMessageTemplate, onProgress, getAccountInfo, addErrorLog)
-        .then(() => {
-          console.log('✅ Mesaj gönderimi tamamlandı:', scheduledMessage.id)
-          this.activeJobs.delete(scheduledMessage.id)
-          // Execution flag'ini de temizle
-          const executionKey = `exec_${scheduledMessage.id}`
-          this.activeExecutions.delete(executionKey)
-        })
-        .catch((error) => {
-          console.error('❌ Mesaj gönderim hatası:', scheduledMessage.id, error)
-          console.error('❌ Hata detayları:', error)
-          this.activeJobs.delete(scheduledMessage.id)
-          // Execution flag'ini de temizle
-          const executionKey = `exec_${scheduledMessage.id}`
-          this.activeExecutions.delete(executionKey)
-        })
+      try {
+        await this.executeMessage(
+          scheduledMessage,
+          getMessageTemplate,
+          onProgress,
+          getAccountInfo,
+          addErrorLog
+        )
+        console.log('✅ Mesaj gönderimi tamamlandı:', scheduledMessage.id)
+      } catch (error) {
+        console.error('❌ Mesaj gönderim hatası:', scheduledMessage.id, error)
+        const raw = error instanceof Error ? error.message : String(error)
+        onExecutionError?.(
+          new Error(formatUserFacingTelegramError(raw, 'general')),
+          scheduledMessage.id
+        )
+      } finally {
+        this.activeJobs.delete(scheduledMessage.id)
+        const executionKey = `exec_${scheduledMessage.id}`
+        this.activeExecutions.delete(executionKey)
+      }
       return
     }
 
@@ -73,6 +96,11 @@ class MessageScheduler {
       } catch (error) {
         console.error('❌ Mesaj gönderim hatası:', scheduledMessage.id, error)
         console.error('❌ Hata detayları:', error)
+        const raw = error instanceof Error ? error.message : String(error)
+        onExecutionError?.(
+          new Error(formatUserFacingTelegramError(raw, 'general')),
+          scheduledMessage.id
+        )
       } finally {
         this.activeJobs.delete(scheduledMessage.id)
         this.timers.delete(scheduledMessage.id)
@@ -95,7 +123,19 @@ class MessageScheduler {
     /** done: executeMessage bittiğinde true (kısmi başarı dahil — UI isActive kapatır) */
     onProgress?: (id: string, sent: number, total: number, done?: boolean) => void,
     getAccountInfo?: (accountId: string) => { sessionString?: string; phoneNumber?: string; apiId?: string; apiHash?: string } | undefined,
-    addErrorLog?: (log: { accountId: string; accountPhoneNumber?: string; username: string; message: string; timestamp: Date; logType: 'error' | 'success' | 'info'; errorType?: 'rate_limit' | 'banned' | 'connection' | 'other' }) => void
+    addErrorLog?: (log: {
+      accountId: string
+      accountPhoneNumber?: string
+      username: string
+      recipientDisplayName?: string
+      message: string
+      timestamp: Date
+      logType: 'error' | 'success' | 'info'
+      errorType?: 'rate_limit' | 'banned' | 'connection' | 'peer' | 'other'
+      summary?: string
+      detail?: string
+      hint?: string
+    }) => void
   ): Promise<void> {
     console.log('🚀 ========== executeMessage BAŞLADI ==========')
     console.log('🚀 Mesaj ID:', scheduledMessage.id)
@@ -143,7 +183,11 @@ class MessageScheduler {
     })
 
     const recipientMode = scheduledMessage.recipientMode ?? 'manual'
-    let effectiveUsernames = [...scheduledMessage.usernames]
+    type RecipientRow = { target: string; displayLabel: string }
+    let recipients: RecipientRow[] = scheduledMessage.usernames.map((t) => ({
+      target: t,
+      displayLabel: formatRecipientDisplayLabel(t),
+    }))
 
     if (recipientMode === 'group_members' && scheduledMessage.groupTarget) {
       const firstAccountId = scheduledMessage.accountIds[0]
@@ -164,22 +208,26 @@ class MessageScheduler {
         this.activeExecutions.delete(executionKey)
         throw new Error(res.error || 'Üye listesi alınamadı')
       }
-      effectiveUsernames = res.members
-        .map((m) => memberToSendTarget(m))
-        .filter((x): x is string => Boolean(x))
-      if (effectiveUsernames.length === 0) {
+      recipients = res.members
+        .map((m) => {
+          const target = memberToSendTarget(m)
+          if (!target) return null
+          return { target, displayLabel: memberDisplayLabel(m) }
+        })
+        .filter((x): x is RecipientRow => x !== null)
+      if (recipients.length === 0) {
         this.activeExecutions.delete(executionKey)
         throw new Error('Gönderilecek üye yok (tümü bot veya kimlik eksik)')
       }
     }
 
     let sentCount = 0
-    const totalCount = scheduledMessage.accountIds.length * effectiveUsernames.length
+    const totalCount = scheduledMessage.accountIds.length * recipients.length
 
     console.log('📊 ========== GÖNDERİM PLANI ==========')
     console.log('📊 Plan detayları:', {
       accountCount: scheduledMessage.accountIds.length,
-      usernameCount: effectiveUsernames.length,
+      usernameCount: recipients.length,
       totalMessages: totalCount,
       delayBetweenMessages: scheduledMessage.delayBetweenMessages,
       delayBetweenMessagesSeconds: scheduledMessage.delayBetweenMessages / 1000,
@@ -209,11 +257,11 @@ class MessageScheduler {
       let accountErrorMessages: string[] = [] // Bu hesap için alınan hatalar
       
       console.log('🔄 ========== KULLANICI/GRUP DÖNGÜSÜ BAŞLADI ==========')
-      console.log('🔄 Toplam alıcı sayısı:', effectiveUsernames.length)
-      console.log('🔄 Alıcılar:', effectiveUsernames)
+      console.log('🔄 Toplam alıcı sayısı:', recipients.length)
+      console.log('🔄 Alıcılar:', recipients.map((r) => ({ hedef: r.target, etiket: r.displayLabel })))
       
-      for (let i = 0; i < effectiveUsernames.length; i++) {
-        const username = effectiveUsernames[i]
+      for (let i = 0; i < recipients.length; i++) {
+        const { target, displayLabel } = recipients[i]
         // Eğer bu hesap kritik hata aldıysa, bu hesap için döngüyü kır
         if (accountRateLimited || accountHasCriticalError) {
           const reason = accountRateLimited ? 'rate limit' : 'kritik hata'
@@ -222,17 +270,18 @@ class MessageScheduler {
         }
         
         // Eğer bu grup daha önce başarısız olduysa, atla
-        if (globalFailedGroups.has(username)) {
-          console.log(`⏭️ Bu grup daha önce başarısız oldu, atlanıyor:`, username)
+        if (globalFailedGroups.has(target)) {
+          console.log(`⏭️ Bu grup daha önce başarısız oldu, atlanıyor:`, target)
           continue
         }
         const usernameIndex = i + 1
         console.log('📨 ========== MESAJ GÖNDERİMİ BAŞLADI ==========')
         console.log('📨 Mesaj bilgileri:', {
           accountId,
-          username,
+          username: target,
+          displayLabel,
           usernameIndex,
-          totalUsernames: effectiveUsernames.length,
+          totalUsernames: recipients.length,
           accountIndex,
           totalAccounts: scheduledMessage.accountIds.length,
           currentProgress: `${sentCount}/${totalCount}`
@@ -251,7 +300,8 @@ class MessageScheduler {
         try {
           console.log('📤 Mesaj gönderiliyor:', {
             accountId,
-            username,
+            username: target,
+            displayLabel,
             template: template.name || 'İsimsiz',
             contentPreview: template.content.substring(0, 50) + '...'
           })
@@ -287,7 +337,7 @@ class MessageScheduler {
           
           const result = await telegramManager.sendMessage(
             accountId,
-            username,
+            target,
             template.content,
             accountInfo?.sessionString,
             accountInfo?.phoneNumber,
@@ -297,7 +347,7 @@ class MessageScheduler {
 
           console.log('📥 Gönderim sonucu:', {
             accountId,
-            username,
+            username: target,
             success: result.success,
             error: result.error
           })
@@ -305,16 +355,27 @@ class MessageScheduler {
           if (result.success) {
             sentCount++
             console.log('✅ ========== MESAJ BAŞARILI ==========')
-            console.log('✅ Mesaj başarıyla gönderildi:', accountId, '->', username, `(${sentCount}/${totalCount})`)
+            console.log('✅ Mesaj başarıyla gönderildi:', accountId, '->', displayLabel, `(${sentCount}/${totalCount})`)
             
             // Başarılı log ekle
             if (addErrorLog) {
               const accountInfo = getAccountInfo ? getAccountInfo(accountId) : undefined
+              const okParts = buildSchedulerSuccessLogParts(
+                displayLabel,
+                sentCount,
+                totalCount,
+                template.name,
+                target
+              )
               addErrorLog({
                 accountId,
                 accountPhoneNumber: accountInfo?.phoneNumber,
-                username,
-                message: `Mesaj başarıyla gönderildi (${sentCount}/${totalCount})`,
+                username: target,
+                recipientDisplayName: displayLabel,
+                message: okParts.message,
+                summary: okParts.summary,
+                detail: okParts.detail,
+                hint: okParts.hint,
                 timestamp: new Date(),
                 logType: 'success'
               })
@@ -323,58 +384,45 @@ class MessageScheduler {
             onProgress?.(scheduledMessage.id, sentCount, totalCount, false)
           } else {
             console.error('❌ ========== MESAJ BAŞARISIZ ==========')
-            console.error('❌ Mesaj gönderilemedi:', accountId, '->', username)
+            console.error('❌ Mesaj gönderilemedi:', accountId, '->', displayLabel)
             console.error('❌ Hata mesajı:', result.error)
             console.error('❌ Detaylar:', {
               accountId,
-              username,
+              username: target,
               error: result.error,
               currentProgress: `${sentCount}/${totalCount}`
             })
             
             // Hata mesajını kaydet
             if (result.error) {
-              accountErrorMessages.push(`${username}: ${result.error}`)
+              accountErrorMessages.push(`${displayLabel}: ${result.error}`)
               
-              // Hata logunu kaydet
               const errorMsg = result.error || ''
-              let errorType: 'rate_limit' | 'banned' | 'connection' | 'other' = 'other'
-              
-              if (errorMsg.includes('rate limit') || 
-                  errorMsg.includes('Rate limit') ||
-                  errorMsg.includes('wait of') ||
-                  errorMsg.includes('beklenmesi gerekiyor') ||
-                  errorMsg.includes('FLOOD_WAIT')) {
-                errorType = 'rate_limit'
-              } else if (errorMsg.includes('USER_BANNED_IN_CHANNEL') ||
-                        errorMsg.includes('yasaklanmış')) {
-                errorType = 'banned'
-              } else if (errorMsg.includes('bağlı değil') ||
-                        errorMsg.includes('session bilgisi bulunamadı') ||
-                        errorMsg.includes('yeniden bağlanılamadı') ||
-                        errorMsg.includes('client bulunamadı')) {
-                errorType = 'connection'
-              }
-              
+              const errParts = buildSchedulerErrorLogParts(errorMsg, displayLabel, target)
+
               // Error log ekle
               if (addErrorLog) {
                 const accountInfo = getAccountInfo ? getAccountInfo(accountId) : undefined
                 addErrorLog({
                   accountId,
                   accountPhoneNumber: accountInfo?.phoneNumber,
-                  username,
-                  message: result.error,
+                  username: target,
+                  recipientDisplayName: displayLabel,
+                  message: errParts.message,
+                  summary: errParts.summary,
+                  detail: errParts.detail,
+                  hint: errParts.hint,
                   timestamp: new Date(),
                   logType: 'error',
-                  errorType
+                  errorType: errParts.errorType,
                 })
               }
               
               // Bu grup için başarısız işaretle (sadece grup hataları için)
               // Rate limit veya connection hatası hesap seviyesinde, banned grup seviyesinde olabilir
-              if (errorType === 'banned' || errorType === 'other') {
-                globalFailedGroups.add(username)
-                console.log(`⏭️ Grup başarısız işaretlendi, diğer hesaplar için atlanacak:`, username)
+              if (errParts.errorType === 'banned' || errParts.errorType === 'other' || errParts.errorType === 'peer') {
+                globalFailedGroups.add(target)
+                console.log(`⏭️ Grup başarısız işaretlendi, diğer hesaplar için atlanacak:`, target)
               }
             }
             
@@ -420,18 +468,18 @@ class MessageScheduler {
           }
         } catch (error) {
           console.error('❌ ========== MESAJ GÖNDERME EXCEPTION ==========')
-          console.error('❌ Exception:', accountId, '->', username)
+          console.error('❌ Exception:', accountId, '->', displayLabel)
           const errorMsg = error instanceof Error ? error.message : String(error)
           console.error('❌ Hata detayları:', {
             error: errorMsg,
             stack: error instanceof Error ? error.stack : 'No stack',
             errorObject: error,
             accountId,
-            username
+            username: target,
           })
           
           // Exception'ı da hata listesine ekle
-          accountErrorMessages.push(`${username}: Exception - ${errorMsg}`)
+          accountErrorMessages.push(`${displayLabel}: Exception - ${errorMsg}`)
           
           // Kritik exception kontrolü
           if (errorMsg.includes('rate limit') || 
@@ -449,7 +497,8 @@ class MessageScheduler {
         console.log('📨 ========== MESAJ GÖNDERİMİ TAMAMLANDI ==========')
         console.log('📨 Son durum:', {
           accountId,
-          username,
+          username: target,
+          displayLabel,
           sentCount,
           totalCount,
           progress: `${sentCount}/${totalCount}`

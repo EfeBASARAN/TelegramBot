@@ -46,6 +46,7 @@ export default function SchedulerPage() {
   const removeScheduledMessage = useAppStore((state) => state.removeScheduledMessage)
   const updateScheduledMessage = useAppStore((state) => state.updateScheduledMessage)
   const addErrorLog = useAppStore((state) => state.addErrorLog)
+  const pushToast = useAppStore((state) => state.pushToast)
 
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
@@ -262,15 +263,12 @@ export default function SchedulerPage() {
               } : undefined
             },
             (log) => {
-              addErrorLog({
-                accountId: log.accountId,
-                accountPhoneNumber: log.accountPhoneNumber,
-                username: log.username,
-                message: log.message,
-                timestamp: log.timestamp,
-                logType: log.logType,
-                errorType: log.errorType
-              })
+              addErrorLog({ ...log })
+            },
+            (err, messageId) => {
+              const msg = err instanceof Error ? err.message : String(err)
+              pushToast(msg, 'error')
+              updateScheduledMessage(messageId, { isActive: false })
             }
           )
         }
@@ -280,34 +278,37 @@ export default function SchedulerPage() {
     }
 
     initializeActiveMessages()
-  }, [scheduledMessages, messageTemplates, accounts, updateScheduledMessage, addErrorLog])
+  }, [scheduledMessages, messageTemplates, accounts, updateScheduledMessage, addErrorLog, pushToast])
 
   const handleAdd = async () => {
     if (!selectedAccountId || !selectedTemplateId || !scheduledAt) {
-      alert('Hesap, şablon ve gönderim tarihi/saati alanlarını doldurun')
+      pushToast('Hesap, şablon ve gönderim tarihi/saati alanlarını doldurun', 'info')
       return
     }
 
     const scheduledDateTime = new Date(scheduledAt)
     if (Number.isNaN(scheduledDateTime.getTime())) {
-      alert('Geçerli bir tarih ve saat seçin')
+      pushToast('Geçerli bir tarih ve saat seçin', 'info')
       return
     }
 
     const accountIds = [selectedAccountId]
 
     if (recipientMode === 'manual' && !usernames.trim()) {
-      alert('Alıcı listesini doldurun veya başka bir alıcı modunu seçin')
+      pushToast('Alıcı listesini doldurun veya başka bir alıcı modunu seçin', 'info')
       return
     }
 
     if (recipientMode === 'custom_list' && !customListRaw.trim()) {
-      alert('Özel listeyi yapıştırın (satır başına: kullanıcı ID | access hash veya kullanıcı | ID | access hash)')
+      pushToast(
+        'Özel listeyi yapıştırın (satır başına: kullanıcı ID | access hash veya kullanıcı | ID | access hash)',
+        'info'
+      )
       return
     }
 
     if (recipientMode === 'group_members' && !selectedGroup) {
-      alert('Bir grup seçin')
+      pushToast('Bir grup seçin', 'info')
       return
     }
 
@@ -323,7 +324,7 @@ export default function SchedulerPage() {
         .map((u) => u.trim())
         .filter((u) => u.length > 0)
       if (usernameList.length === 0) {
-        alert('En az bir alıcı kullanıcı adı veya kanal tanımlayın')
+        pushToast('En az bir alıcı kullanıcı adı veya kanal tanımlayın', 'info')
         return
       }
       totalCount = accountIds.length * usernameList.length
@@ -331,11 +332,11 @@ export default function SchedulerPage() {
     } else if (recipientMode === 'custom_list') {
       const { targets, errors } = parseCustomPeerList(customListRaw)
       if (errors.length > 0) {
-        alert(errors.join('\n'))
+        pushToast(errors.join('\n'), 'error')
         return
       }
       if (targets.length === 0) {
-        alert('En az bir geçerli satır girin.')
+        pushToast('En az bir geçerli satır girin.', 'info')
         return
       }
       usernameList = targets
@@ -345,7 +346,7 @@ export default function SchedulerPage() {
     } else {
       const firstAccount = accounts.find((a) => a.id === selectedAccountId)
       if (!firstAccount?.sessionString) {
-        alert('Grup üyelerini kullanmak için seçili hesabın oturumu açık olmalı')
+        pushToast('Grup üyelerini kullanmak için seçili hesabın oturumu açık olmalı', 'error')
         return
       }
       const apiId = firstAccount.apiId || apiConfig?.apiId
@@ -359,14 +360,17 @@ export default function SchedulerPage() {
         selectedGroup!
       )
       if (!res.success) {
-        alert(res.error || 'Üye listesi alınamadı')
+        pushToast(res.error || 'Üye listesi alınamadı', 'error')
         return
       }
       const n = (res.members || [])
         .map((m) => memberToSendTarget(m))
         .filter((x): x is string => Boolean(x)).length
       if (n === 0) {
-        alert('Bu grupta özel mesaj gönderilecek üye yok (yalnızca botlar veya eksik kimlik)')
+        pushToast(
+          'Bu grupta özel mesaj gönderilecek üye yok (yalnızca botlar veya eksik kimlik)',
+          'error'
+        )
         return
       }
       usernameList = []
@@ -435,7 +439,7 @@ export default function SchedulerPage() {
   const handleEdit = (scheduledMessage: ScheduledMessage) => {
     // Aktif mesajları düzenleyemez
     if (scheduledMessage.isActive) {
-      alert('Çalışan gönderim düzenlenemez. Önce durdurun, sonra tekrar deneyin.')
+      pushToast('Çalışan gönderim düzenlenemez. Önce durdurun, sonra tekrar deneyin.', 'info')
       return
     }
 
@@ -475,7 +479,7 @@ export default function SchedulerPage() {
     )
     if (!template) {
       console.error('❌ Mesaj şablonu bulunamadı:', scheduledMessage.messageTemplateId)
-      alert('Seçilen mesaj şablonu bulunamadı veya silinmiş olabilir')
+      pushToast('Seçilen mesaj şablonu bulunamadı veya silinmiş olabilir', 'error')
       return
     }
 
@@ -511,15 +515,12 @@ export default function SchedulerPage() {
         } : undefined
       },
       (log) => {
-        addErrorLog({
-          accountId: log.accountId,
-          accountPhoneNumber: log.accountPhoneNumber,
-          username: log.username,
-          message: log.message,
-          timestamp: log.timestamp,
-          logType: log.logType,
-          errorType: log.errorType
-        })
+        addErrorLog({ ...log })
+      },
+      (err, messageId) => {
+        const msg = err instanceof Error ? err.message : String(err)
+        pushToast(msg, 'error')
+        updateScheduledMessage(messageId, { isActive: false })
       }
     )
     

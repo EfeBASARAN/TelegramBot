@@ -2,6 +2,7 @@ import { TelegramClient } from 'telegram'
 import { StringSession } from 'telegram/sessions'
 import { Api } from 'telegram'
 import { returnBigInt } from 'telegram/Helpers'
+import { formatUserFacingTelegramError } from './telegramErrorMessages'
 
 /** Gruplar / süper gruplar / kanallar listesi için özet bilgi */
 export interface JoinedGroupInfo {
@@ -1053,9 +1054,12 @@ class TelegramManager {
 
       return { success: true, members }
     } catch (error: any) {
+      const raw = String(
+        error?.message ?? error?.errorMessage ?? error ?? 'Üye listesi alınamadı'
+      )
       return {
         success: false,
-        error: error.message || error.errorMessage || 'Üye listesi alınamadı',
+        error: formatUserFacingTelegramError(raw, 'participants'),
       }
     }
   }

@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react'
 import { AlertCircle, Trash2, X, ChevronDown, ChevronUp, Clock, User, MessageSquare, CheckCircle, Info } from 'lucide-react'
 import { useAppStore, ErrorLog } from '@/store/appStore'
+import { formatRecipientDisplayLabel } from '@/lib/recipientLabels'
 
 export default function LogsPage() {
   const errorLogs = useAppStore((state) => state.errorLogs)
@@ -91,6 +92,8 @@ export default function LogsPage() {
         return 'bg-red-500/10 text-red-400 border-red-500/20'
       case 'connection':
         return 'bg-orange-500/10 text-orange-400 border-orange-500/20'
+      case 'peer':
+        return 'bg-violet-500/10 text-violet-300 border-violet-500/25'
       default:
         return 'bg-red-500/10 text-red-400 border-red-500/20'
     }
@@ -111,6 +114,8 @@ export default function LogsPage() {
         return 'Yasak / kısıtlama'
       case 'connection':
         return 'Bağlantı sorunu'
+      case 'peer':
+        return 'Alıcı / kimlik'
       default:
         return 'Hata'
     }
@@ -156,8 +161,8 @@ export default function LogsPage() {
         <div>
           <h2 className="text-4xl font-bold text-white mb-3 gradient-text tracking-tight">Gönderim günlüğü</h2>
           <p className="text-white/50 text-base font-medium max-w-2xl">
-            Başarılı gönderimler, bilgi satırları ve hatalar hesap ve alıcıya göre gruplanır. Kayıtlar yalnızca bu
-            tarayıcıda (localStorage) tutulur.
+            Her kayıtta özet, teknik detay ve ne yapılabileceği gösterilir. Hesap ve alıcıya göre gruplanır; veriler
+            yalnızca bu tarayıcıda (localStorage) tutulur.
           </p>
         </div>
         {errorLogs.length > 0 && (
@@ -243,6 +248,9 @@ export default function LogsPage() {
                     {Object.entries(groupLogs).map(([username, groupErrors]) => {
                       const groupKey = `${accountId}-${username}`
                       const isGroupExpanded = expandedGroups.has(groupKey)
+                      const recipientTitle =
+                        groupErrors.find((l) => l.recipientDisplayName)?.recipientDisplayName ||
+                        formatRecipientDisplayLabel(username)
 
                       return (
                         <div
@@ -258,9 +266,9 @@ export default function LogsPage() {
                               <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center border border-white/10">
                                 <MessageSquare size={18} className="text-white/60" />
                               </div>
-                              <div>
-                                <h4 className="font-bold text-white text-sm mb-1">
-                                  {username}
+                              <div className="min-w-0">
+                                <h4 className="font-bold text-white text-sm mb-1 truncate" title={username}>
+                                  {recipientTitle}
                                 </h4>
                                 <p className="text-xs text-white/50">
                                   {groupErrors.length} kayıt
@@ -300,9 +308,35 @@ export default function LogsPage() {
                                           {formatDate(log.timestamp)}
                                         </span>
                                       </div>
-                                      <p className={`text-sm font-medium ${log.logType === 'success' ? 'text-green-300' : log.logType === 'error' ? 'text-red-300' : 'text-white/80'}`}>
+                                      {log.summary && (
+                                        <p
+                                          className={`text-sm font-semibold mb-1.5 ${
+                                            log.logType === 'success'
+                                              ? 'text-green-200'
+                                              : log.logType === 'error'
+                                                ? 'text-red-200/95'
+                                                : 'text-white/90'
+                                          }`}
+                                        >
+                                          {log.summary}
+                                        </p>
+                                      )}
+                                      <p
+                                        className={`text-sm font-medium ${log.logType === 'success' ? 'text-green-300/95' : log.logType === 'error' ? 'text-red-200/90' : 'text-white/80'}`}
+                                      >
                                         {log.message}
                                       </p>
+                                      {log.detail && (
+                                        <pre className="mt-2 text-xs text-white/45 whitespace-pre-wrap break-words font-mono leading-relaxed bg-black/25 rounded-lg px-3 py-2 border border-white/[0.06]">
+                                          {log.detail}
+                                        </pre>
+                                      )}
+                                      {log.hint && (
+                                        <p className="mt-2 text-xs text-slate-300/90 leading-relaxed pl-2 border-l-2 border-white/15">
+                                          <span className="text-white/50 font-semibold">Öneri: </span>
+                                          {log.hint}
+                                        </p>
+                                      )}
                                     </div>
                                   </div>
                                   <p className="text-xs text-white/30 mt-2">

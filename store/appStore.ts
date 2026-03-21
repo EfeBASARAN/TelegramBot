@@ -60,16 +60,31 @@ export interface ErrorLog {
   id: string
   accountId: string
   accountPhoneNumber?: string
+  /** Telegram gönderim hedefi (teknik: __peer_user__:… veya @kullanıcı) — gruplama anahtarı */
   username: string
+  /** Arayüzde gösterilecek alıcı adı / @kullanıcı / isim (username ham dizesi olabilir) */
+  recipientDisplayName?: string
   message: string // error veya success mesajı
   timestamp: Date
   logType: 'error' | 'success' | 'info'
-  errorType?: 'rate_limit' | 'banned' | 'connection' | 'other' // Sadece error için
+  errorType?: 'rate_limit' | 'banned' | 'connection' | 'peer' | 'other' // Sadece error için
+  /** Kısa başlık (örn. "Mesaj iletildi") */
+  summary?: string
+  /** Uzun açıklama / teknik metin */
+  detail?: string
+  /** Kullanıcıya ne yapılabileceği */
+  hint?: string
 }
 
 interface TelegramApiConfig {
   apiId: string
   apiHash: string
+}
+
+export interface AppToast {
+  id: string
+  message: string
+  variant: 'error' | 'success' | 'info'
 }
 
 interface AppState {
@@ -78,6 +93,8 @@ interface AppState {
   messageTemplates: MessageTemplate[]
   scheduledMessages: ScheduledMessage[]
   errorLogs: ErrorLog[]
+  /** Geçici arayüz bildirimleri (alert yerine) */
+  toasts: AppToast[]
   apiConfig: TelegramApiConfig | null
   isLoaded: boolean
   setCurrentPage: (page: Page) => void
@@ -94,6 +111,8 @@ interface AppState {
   addErrorLog: (log: Omit<ErrorLog, 'id'>) => void
   clearErrorLogs: () => void
   loadFromStorage: () => void
+  pushToast: (message: string, variant?: AppToast['variant']) => void
+  dismissToast: (id: string) => void
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -102,6 +121,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   messageTemplates: [],
   scheduledMessages: [],
   errorLogs: [],
+  toasts: [],
   apiConfig: null,
   isLoaded: false,
   
@@ -218,7 +238,22 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ errorLogs: [] })
     saveErrorLogs([])
   },
-  
+
+  pushToast: (message, variant = 'info') => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    set((state) => ({
+      toasts: [...state.toasts, { id, message, variant }].slice(-5),
+    }))
+    const duration = variant === 'error' ? 12000 : 8000
+    setTimeout(() => {
+      get().dismissToast(id)
+    }, duration)
+  },
+
+  dismissToast: (id) => {
+    set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) }))
+  },
+
   loadFromStorage: () => {
     if (get().isLoaded) return // Zaten yüklendi
     

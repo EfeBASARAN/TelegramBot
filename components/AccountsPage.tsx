@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, Power, PowerOff, Phone, Eye, EyeOff } from 'lucide-react'
+import { Plus, Trash2, Power, PowerOff, Phone, Eye, EyeOff, FileSpreadsheet } from 'lucide-react'
 import { useAppStore, TelegramAccount } from '@/store/appStore'
+import { exportRowsToExcel, sanitizeExcelFilename } from '@/lib/excelExport'
 import { telegramManager } from '@/lib/telegram'
 
 export default function AccountsPage() {
@@ -13,6 +14,7 @@ export default function AccountsPage() {
   const updateAccount = useAppStore((state) => state.updateAccount)
   const setCurrentPage = useAppStore((state) => state.setCurrentPage)
   const isLoaded = useAppStore((state) => state.isLoaded)
+  const pushToast = useAppStore((state) => state.pushToast)
 
   // Sayfa yüklendiğinde, session string'i olan hesapları otomatik bağla
   useEffect(() => {
@@ -393,9 +395,29 @@ export default function AccountsPage() {
     }
   }
 
+  const handleExportAccountsExcel = () => {
+    if (accounts.length === 0) {
+      pushToast('Dışa aktarılacak hesap yok', 'info')
+      return
+    }
+    const rows = accounts.map((a) => ({
+      Telefon: a.phoneNumber,
+      Ad: a.firstName ?? '',
+      Soyad: a.lastName ?? '',
+      'Kullanıcı adı': a.username ? `@${a.username}` : '',
+      Bağlı: a.isConnected ? 'Evet' : 'Hayır',
+      'Oturum kayıtlı': a.sessionString ? 'Evet' : 'Hayır',
+      'API ID': a.apiId ?? '',
+    }))
+    const name = `hesaplar_${sanitizeExcelFilename('ozet')}_${new Date().toISOString().slice(0, 10)}`
+    if (exportRowsToExcel(rows, name, 'Hesaplar')) {
+      pushToast('Hesap özeti Excel olarak indirildi (oturum ve API hash yok)', 'success')
+    }
+  }
+
   return (
     <div className="fade-in relative z-10 min-h-full">
-      <div className="flex justify-between items-start mb-8">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-8">
         <div>
           <h2 className="text-4xl font-bold text-white mb-3 gradient-text tracking-tight">Hesaplar</h2>
           <p className="text-white/50 text-base font-medium max-w-2xl">
@@ -403,16 +425,29 @@ export default function AccountsPage() {
             bağlı hesaplarla gönderim yapar.
           </p>
         </div>
-        <button
-          onClick={() => {
-            resetModal()
-            setShowAddModal(true)
-          }}
-          className="btn-primary flex items-center gap-2 px-6 py-3 rounded-xl font-semibold"
-        >
-          <Plus size={20} />
-          Hesap Ekle
-        </button>
+        <div className="flex flex-col sm:flex-row gap-3 shrink-0 w-full sm:w-auto">
+          {accounts.length > 0 && (
+            <button
+              type="button"
+              onClick={handleExportAccountsExcel}
+              className="flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-semibold border border-white/15 bg-white/[0.06] hover:bg-white/10 text-white/90 transition-colors"
+              title="Telefon, ad ve bağlantı özeti — oturum ve API hash dahil değildir"
+            >
+              <FileSpreadsheet size={20} />
+              Excel&apos;e aktar
+            </button>
+          )}
+          <button
+            onClick={() => {
+              resetModal()
+              setShowAddModal(true)
+            }}
+            className="btn-primary flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold"
+          >
+            <Plus size={20} />
+            Hesap Ekle
+          </button>
+        </div>
       </div>
 
 

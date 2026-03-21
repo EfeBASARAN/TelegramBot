@@ -16,9 +16,11 @@ import {
   MessageSquare,
   X,
   Search,
+  FileSpreadsheet,
 } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
 import { telegramManager, type JoinedGroupInfo, type GroupMemberInfo } from '@/lib/telegram'
+import { exportRowsToExcel, sanitizeExcelFilename } from '@/lib/excelExport'
 
 function formatListActivity(iso?: string): string {
   if (!iso) return ''
@@ -39,6 +41,7 @@ function formatListActivity(iso?: string): string {
 export default function GroupsPage() {
   const accounts = useAppStore((state) => state.accounts)
   const apiConfig = useAppStore((state) => state.apiConfig)
+  const pushToast = useAppStore((state) => state.pushToast)
 
   const connectedAccounts = useMemo(
     () => accounts.filter((a) => Boolean(a.sessionString)),
@@ -55,6 +58,7 @@ export default function GroupsPage() {
   const [loadingMembersId, setLoadingMembersId] = useState<string | null>(null)
   const [membersError, setMembersError] = useState<{ id: string; message: string } | null>(null)
   const [membersPanelGroup, setMembersPanelGroup] = useState<JoinedGroupInfo | null>(null)
+  const [memberSearchQuery, setMemberSearchQuery] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
 
   const selectedAccount = useMemo(
@@ -123,18 +127,19 @@ export default function GroupsPage() {
           setMembersByGroupId((prev) => ({ ...prev, [g.id]: res.members! }))
           setMembersError(null)
         } else {
-          setMembersError({ id: g.id, message: res.error || 'Üyeler yüklenemedi' })
+          const errMsg = res.error || 'Üyeler yüklenemedi'
+          setMembersError({ id: g.id, message: errMsg })
+          pushToast(errMsg, 'error')
         }
       } catch (e: unknown) {
-        setMembersError({
-          id: g.id,
-          message: e instanceof Error ? e.message : 'Hata',
-        })
+        const msg = e instanceof Error ? e.message : 'Hata'
+        setMembersError({ id: g.id, message: msg })
+        pushToast(msg, 'error')
       } finally {
         setLoadingMembersId(null)
       }
     },
-    [selectedAccount, apiConfig]
+    [selectedAccount, apiConfig, pushToast]
   )
 
   const openMembersPanel = useCallback(
@@ -151,6 +156,7 @@ export default function GroupsPage() {
   const closeMembersPanel = useCallback(() => {
     setMembersPanelGroup(null)
     setMembersError(null)
+    setMemberSearchQuery('')
   }, [])
 
   const refreshPanelMembers = useCallback(() => {
@@ -165,6 +171,28 @@ export default function GroupsPage() {
 
   const panelMembers = membersPanelGroup ? membersByGroupId[membersPanelGroup.id] : undefined
   const panelLoading = membersPanelGroup && loadingMembersId === membersPanelGroup.id
+
+  const filteredPanelMembers = useMemo((): GroupMemberInfo[] => {
+    if (!panelMembers?.length) return []
+    const raw = memberSearchQuery.trim()
+    if (!raw) return panelMembers
+    const q = raw.toLowerCase()
+    return panelMembers.filter((m) => {
+      const fullName = [m.firstName, m.lastName].filter(Boolean).join(' ').toLowerCase()
+      const user = (m.username || '').toLowerCase()
+      const idStr = String(m.id)
+      return (
+        fullName.includes(q) ||
+        user.includes(q) ||
+        idStr.includes(raw) ||
+        `@${user}`.includes(q)
+      )
+    })
+  }, [panelMembers, memberSearchQuery])
+
+  useEffect(() => {
+    setMemberSearchQuery('')
+  }, [membersPanelGroup?.id])
   const panelErr =
     membersPanelGroup && membersError?.id === membersPanelGroup.id ? membersError.message : null
 
@@ -190,6 +218,64 @@ export default function GroupsPage() {
       setExpandedId(null)
     }
   }, [filteredGroups, expandedId])
+
+  const handleExportGroupsExcel = useCallback(() => {
+    if (!filteredGroups.length) {
+      pushToast('Dışa aktarılacak grup yok', 'info')
+      return
+    }
+    const accLabel =
+      selectedAccount?.phoneNumber || selectedAccount?.firstName || selectedAccountId || 'hesap'
+    const rows = filteredGroups.map((g) => ({
+      Başlık: g.title,
+      'Kullanıcı adı': g.username ? `@${g.username.replace(/^@/, '')}` : '',
+      Tür: g.typeLabel,
+      'Üye sayısı': g.membersCount ?? '',
+      'Herkese açık': g.isPublic ? 'Evet' : 'Hayır',
+      'Peer anahtarı': g.peerKey ?? '',
+      'Access hash': g.accessHash ?? '',
+      'Son aktivite': g.lastActivityAt ? formatListActivity(g.lastActivityAt) : '',
+      'Son mesaj özeti': g.lastMessagePreview ?? '',
+    }))
+    const name = `gruplar_${sanitizeExcelFilename(accLabel)}_${new Date().toISOString().slice(0, 10)}`
+    if (exportRowsToExcel(rows, name, 'Gruplar')) {
+      pushToast('Grup listesi Excel olarak indirildi', 'success')
+    }
+  }, [filteredGroups, pushToast, selectedAccount, selectedAccountId])
+
+  const handleExportMembersExcel = useCallback(() => {
+    if (!membersPanelGroup) return
+    if (!panelMembers?.length) {
+      pushToast('Önce üye listesinin yüklenmesini bekleyin', 'info')
+      return
+    }
+    const list = memberSearchQuery.trim() ? filteredPanelMembers : panelMembers
+    if (!list.length) {
+      pushToast('Dışa aktarılacak üye yok', 'info')
+      return
+    }
+    const rows = list.map((m) => ({
+      Grup: membersPanelGroup.title,
+      'Grup türü': membersPanelGroup.typeLabel,
+      Ad: m.firstName ?? '',
+      Soyad: m.lastName ?? '',
+      'Kullanıcı adı': m.username ? `@${m.username}` : '',
+      'Kullanıcı ID': m.id,
+      'Access hash': m.accessHash ?? '',
+      Bot: m.isBot ? 'Evet' : 'Hayır',
+    }))
+    const suffix = memberSearchQuery.trim() ? '_filtre' : ''
+    const name = `uyeler_${sanitizeExcelFilename(membersPanelGroup.title)}${suffix}_${new Date().toISOString().slice(0, 10)}`
+    if (exportRowsToExcel(rows, name, 'Üyeler')) {
+      pushToast('Üye listesi Excel olarak indirildi', 'success')
+    }
+  }, [
+    membersPanelGroup,
+    panelMembers,
+    memberSearchQuery,
+    filteredPanelMembers,
+    pushToast,
+  ])
 
   return (
     <div className="fade-in relative z-10 min-h-full w-full max-w-[1600px]">
@@ -255,6 +341,16 @@ export default function GroupsPage() {
             >
               {loading ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
               {loading ? 'Yükleniyor…' : 'Listeyi yenile'}
+            </button>
+            <button
+              type="button"
+              onClick={handleExportGroupsExcel}
+              disabled={loading || filteredGroups.length === 0}
+              className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold border border-white/15 bg-white/[0.06] hover:bg-white/10 text-white/90 disabled:opacity-50 disabled:cursor-not-allowed shrink-0 transition-colors"
+              title="Görünen grup satırlarını Excel’e aktarır"
+            >
+              <FileSpreadsheet size={18} />
+              Excel’e aktar
             </button>
           </div>
 
@@ -508,6 +604,15 @@ export default function GroupsPage() {
               <div className="flex items-center gap-1 shrink-0">
                 <button
                   type="button"
+                  onClick={handleExportMembersExcel}
+                  disabled={!!panelLoading || !panelMembers?.length}
+                  className="p-2 rounded-lg hover:bg-white/10 text-white/60 hover:text-white transition-colors disabled:opacity-50"
+                  title="Üyeleri Excel’e aktar (arama varsa yalnızca filtrelenenler)"
+                >
+                  <FileSpreadsheet size={18} />
+                </button>
+                <button
+                  type="button"
                   onClick={refreshPanelMembers}
                   disabled={!!panelLoading}
                   className="p-2 rounded-lg hover:bg-white/10 text-white/60 hover:text-white transition-colors disabled:opacity-50"
@@ -526,6 +631,29 @@ export default function GroupsPage() {
               </div>
             </div>
 
+            <div className="px-3 pt-0 pb-2 border-b border-white/10 bg-zinc-950/70">
+              <label htmlFor="member-search" className="sr-only">
+                Üye ara
+              </label>
+              <div className="relative">
+                <Search
+                  size={16}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-white/35 pointer-events-none"
+                  aria-hidden
+                />
+                <input
+                  id="member-search"
+                  type="search"
+                  value={memberSearchQuery}
+                  onChange={(e) => setMemberSearchQuery(e.target.value)}
+                  placeholder="İsim, @kullanıcı veya ID ile ara…"
+                  disabled={!!panelLoading || !!panelErr}
+                  autoComplete="off"
+                  className="w-full rounded-lg bg-white/5 border border-white/10 pl-9 pr-3 py-2 text-sm text-white placeholder:text-white/35 focus:outline-none focus:ring-1 focus:ring-cyan-500/40 focus:border-cyan-500/25 disabled:opacity-50"
+                />
+              </div>
+            </div>
+
             <div className="flex-1 overflow-y-auto min-h-0 p-3">
               {panelLoading && (
                 <div className="flex flex-col items-center justify-center py-16 gap-3 text-white/50">
@@ -540,7 +668,11 @@ export default function GroupsPage() {
                 </div>
               )}
 
-              {!panelLoading && !panelErr && panelMembers && panelMembers.length > 0 && (
+              {!panelLoading &&
+                !panelErr &&
+                panelMembers &&
+                panelMembers.length > 0 &&
+                filteredPanelMembers.length > 0 && (
                 <div className="rounded-lg border border-white/10 overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[520px]">
                     <thead className="sticky top-0 bg-zinc-900/95 text-slate-500 font-semibold border-b border-white/10 backdrop-blur-sm">
@@ -552,7 +684,7 @@ export default function GroupsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {panelMembers.map((m) => (
+                      {filteredPanelMembers.map((m) => (
                         <tr key={m.id} className="border-b border-white/5 text-white/85 hover:bg-white/[0.04]">
                           <td className="p-2.5 pl-3">
                             {[m.firstName, m.lastName].filter(Boolean).join(' ') || '—'}
@@ -574,6 +706,17 @@ export default function GroupsPage() {
                 </div>
               )}
 
+              {!panelLoading &&
+                !panelErr &&
+                panelMembers &&
+                panelMembers.length > 0 &&
+                filteredPanelMembers.length === 0 &&
+                memberSearchQuery.trim() !== '' && (
+                  <p className="text-sm text-amber-200/90 text-center py-10 px-2 rounded-xl border border-amber-500/20 bg-amber-500/5">
+                    Aramanızla eşleşen üye yok. Farklı bir kelime veya ID deneyin.
+                  </p>
+                )}
+
               {!panelLoading && !panelErr && panelMembers && panelMembers.length === 0 && (
                 <p className="text-sm text-white/45 text-center py-12 px-2">
                   Bu sohbet için üye döndürülmedi (yetki veya kanal türü).
@@ -581,8 +724,15 @@ export default function GroupsPage() {
               )}
             </div>
 
-            <div className="p-3 border-t border-white/[0.06] text-[11px] text-white/40 bg-black/30">
-              En fazla 200 üye · Telegram API kuralları geçerlidir
+            <div className="p-3 border-t border-white/[0.06] text-[11px] text-white/40 bg-black/30 flex flex-wrap items-center justify-between gap-2">
+              <span>
+                {panelMembers && panelMembers.length > 0
+                  ? memberSearchQuery.trim()
+                    ? `${filteredPanelMembers.length} / ${panelMembers.length} üye`
+                    : `${panelMembers.length} üye`
+                  : 'En fazla 200 üye'}{' '}
+                · Telegram API kuralları geçerlidir
+              </span>
             </div>
           </aside>
         )}
