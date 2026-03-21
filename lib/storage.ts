@@ -32,7 +32,8 @@ export interface StoredScheduledMessage {
   id: string
   accountIds: string[]
   usernames: string[]
-  recipientMode?: 'manual' | 'group_members'
+  recipientMode?: 'manual' | 'group_members' | 'custom_list'
+  customListRaw?: string
   groupTarget?: JoinedGroupInfo
   messageTemplateId: string
   scheduledTime: string // ISO string

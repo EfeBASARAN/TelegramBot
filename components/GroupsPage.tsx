@@ -15,6 +15,7 @@ import {
   Clock,
   MessageSquare,
   X,
+  Search,
 } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
 import { telegramManager, type JoinedGroupInfo, type GroupMemberInfo } from '@/lib/telegram'
@@ -54,6 +55,7 @@ export default function GroupsPage() {
   const [loadingMembersId, setLoadingMembersId] = useState<string | null>(null)
   const [membersError, setMembersError] = useState<{ id: string; message: string } | null>(null)
   const [membersPanelGroup, setMembersPanelGroup] = useState<JoinedGroupInfo | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
 
   const selectedAccount = useMemo(
     () => accounts.find((a) => a.id === selectedAccountId),
@@ -85,6 +87,7 @@ export default function GroupsPage() {
       )
       if (res.success && res.groups) {
         setGroups(res.groups)
+        setSearchQuery('')
         setHasFetched(true)
         setMembersByGroupId({})
         setMembersPanelGroup(null)
@@ -165,6 +168,29 @@ export default function GroupsPage() {
   const panelErr =
     membersPanelGroup && membersError?.id === membersPanelGroup.id ? membersError.message : null
 
+  const filteredGroups = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return groups
+    return groups.filter((g) => {
+      const title = (g.title || '').toLowerCase()
+      const un = (g.username || '').toLowerCase().replace(/^@/, '')
+      const typeL = (g.typeLabel || '').toLowerCase()
+      const idStr = String(g.id || '')
+      return (
+        title.includes(q) ||
+        un.includes(q) ||
+        typeL.includes(q) ||
+        idStr.includes(q)
+      )
+    })
+  }, [groups, searchQuery])
+
+  useEffect(() => {
+    if (expandedId && !filteredGroups.some((g) => g.id === expandedId)) {
+      setExpandedId(null)
+    }
+  }, [filteredGroups, expandedId])
+
   return (
     <div className="fade-in relative z-10 min-h-full w-full max-w-[1600px]">
       {/* Mobil: panel açıkken arka plan */}
@@ -202,6 +228,7 @@ export default function GroupsPage() {
                 onChange={(e) => {
                   setSelectedAccountId(e.target.value)
                   setGroups([])
+                  setSearchQuery('')
                   setError('')
                   setExpandedId(null)
                   setHasFetched(false)
@@ -230,6 +257,35 @@ export default function GroupsPage() {
               {loading ? 'Yükleniyor…' : 'Listeyi yenile'}
             </button>
           </div>
+
+          {groups.length > 0 && (
+            <div className="relative mb-6 max-w-xl">
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/35"
+                size={18}
+                aria-hidden
+              />
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Grup adı, @kullanıcı, tür veya ID ile ara…"
+                autoComplete="off"
+                className="input-focus w-full pl-10 pr-10 py-2.5 rounded-xl text-white text-sm placeholder:text-white/35"
+                aria-label="Gruplarda ara"
+              />
+              {searchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-white/45 hover:text-white hover:bg-white/10 transition-colors"
+                  aria-label="Aramayı temizle"
+                >
+                  <X size={16} />
+                </button>
+              ) : null}
+            </div>
+          )}
 
           {error && (
             <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm flex items-start gap-3">
@@ -262,12 +318,24 @@ export default function GroupsPage() {
             </div>
           )}
 
-          {groups.length > 0 && (
+          {groups.length > 0 && filteredGroups.length === 0 && (
+            <div className="mb-6 p-4 rounded-xl surface-muted border border-white/10 text-white/55 text-sm text-center">
+              Aramanızla eşleşen grup yok. Farklı bir metin deneyin veya aramayı temizleyin.
+            </div>
+          )}
+
+          {groups.length > 0 && filteredGroups.length > 0 && (
             <div className="space-y-2">
               <p className="text-xs text-white/40 font-medium mb-2">
-                Toplam {groups.length} kayıt (en fazla 200 sohbet)
+                {searchQuery.trim() ? (
+                  <>
+                    {filteredGroups.length} / {groups.length} kayıt gösteriliyor
+                  </>
+                ) : (
+                  <>Toplam {groups.length} kayıt (en fazla 200 sohbet)</>
+                )}
               </p>
-              {groups.map((g) => {
+              {filteredGroups.map((g) => {
                 const open = expandedId === g.id
                 const panelActive = membersPanelGroup?.id === g.id
                 return (
@@ -473,13 +541,14 @@ export default function GroupsPage() {
               )}
 
               {!panelLoading && !panelErr && panelMembers && panelMembers.length > 0 && (
-                <div className="rounded-lg border border-white/10 overflow-hidden">
-                  <table className="w-full text-left text-xs">
+                <div className="rounded-lg border border-white/10 overflow-x-auto">
+                  <table className="w-full text-left text-xs min-w-[520px]">
                     <thead className="sticky top-0 bg-zinc-900/95 text-slate-500 font-semibold border-b border-white/10 backdrop-blur-sm">
                       <tr>
                         <th className="p-2.5 pl-3">Ad</th>
                         <th className="p-2.5">@kullanıcı</th>
-                        <th className="p-2.5 pr-3 font-mono">ID</th>
+                        <th className="p-2.5 font-mono whitespace-nowrap">Kullanıcı ID</th>
+                        <th className="p-2.5 pr-3 font-mono">Access hash</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -494,7 +563,10 @@ export default function GroupsPage() {
                           <td className="p-2.5 font-mono text-slate-300">
                             {m.username ? `@${m.username}` : '—'}
                           </td>
-                          <td className="p-2.5 pr-3 font-mono text-white/45">{m.id}</td>
+                          <td className="p-2.5 font-mono text-white/55 whitespace-nowrap">{m.id}</td>
+                          <td className="p-2.5 pr-3 font-mono text-slate-400/90 break-all max-w-[200px] xl:max-w-none">
+                            {m.accessHash ?? '—'}
+                          </td>
                         </tr>
                       ))}
                     </tbody>

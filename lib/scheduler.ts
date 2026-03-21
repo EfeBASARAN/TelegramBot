@@ -9,7 +9,8 @@ class MessageScheduler {
   async scheduleMessage(
     scheduledMessage: ScheduledMessage,
     getMessageTemplate: (id: string) => { content: string; name?: string } | undefined,
-    onProgress?: (id: string, sent: number, total: number) => void,
+    /** done: executeMessage bittiğinde true (kısmi başarı dahil — UI isActive kapatır) */
+    onProgress?: (id: string, sent: number, total: number, done?: boolean) => void,
     getAccountInfo?: (accountId: string) => { sessionString?: string; phoneNumber?: string } | undefined,
     addErrorLog?: (log: { accountId: string; accountPhoneNumber?: string; username: string; message: string; timestamp: Date; logType: 'error' | 'success' | 'info'; errorType?: 'rate_limit' | 'banned' | 'connection' | 'other' }) => void
   ): Promise<void> {
@@ -91,7 +92,8 @@ class MessageScheduler {
   private async executeMessage(
     scheduledMessage: ScheduledMessage,
     getMessageTemplate: (id: string) => { content: string; name?: string } | undefined,
-    onProgress?: (id: string, sent: number, total: number) => void,
+    /** done: executeMessage bittiğinde true (kısmi başarı dahil — UI isActive kapatır) */
+    onProgress?: (id: string, sent: number, total: number, done?: boolean) => void,
     getAccountInfo?: (accountId: string) => { sessionString?: string; phoneNumber?: string; apiId?: string; apiHash?: string } | undefined,
     addErrorLog?: (log: { accountId: string; accountPhoneNumber?: string; username: string; message: string; timestamp: Date; logType: 'error' | 'success' | 'info'; errorType?: 'rate_limit' | 'banned' | 'connection' | 'other' }) => void
   ): Promise<void> {
@@ -318,7 +320,7 @@ class MessageScheduler {
               })
             }
             
-            onProgress?.(scheduledMessage.id, sentCount, totalCount)
+            onProgress?.(scheduledMessage.id, sentCount, totalCount, false)
           } else {
             console.error('❌ ========== MESAJ BAŞARISIZ ==========')
             console.error('❌ Mesaj gönderilemedi:', accountId, '->', username)
@@ -512,7 +514,7 @@ class MessageScheduler {
     // Execution flag'ini temizle
     this.activeExecutions.delete(`exec_${scheduledMessage.id}`)
     
-    onProgress?.(scheduledMessage.id, sentCount, totalCount)
+    onProgress?.(scheduledMessage.id, sentCount, totalCount, true)
   }
 
   cancelMessage(id: string): void {

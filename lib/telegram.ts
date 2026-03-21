@@ -66,6 +66,128 @@ export function memberToSendTarget(m: GroupMemberInfo): string | null {
   return null
 }
 
+/**
+ * Zamanlayıcı özel liste, satır başına:
+ * - `kullanıcıId | accessHash` (iki sütun, ikisi de tam sayı)
+ * - `kullanıcıAdı | kullanıcıId | accessHash` (üç sütun; baştaki @ opsiyonel, geçerli kullanıcı adıysa gönderimde önce getEntity denenir)
+ */
+export function parseCustomPeerList(text: string): { targets: string[]; errors: string[] } {
+  const targets: string[] = []
+  const errors: string[] = []
+  const lines = text.split(/\r?\n/)
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line) continue
+    const parts = line.split('|').map((p) => p.trim())
+
+    if (parts.length === 2) {
+      const idStr = parts[0]
+      const hashStr = parts[1]
+      if (!/^-?\d+$/.test(idStr)) {
+        errors.push(`Satır ${i + 1} (2 sütun): kullanıcı ID tam sayı olmalı`)
+        continue
+      }
+      if (!/^-?\d+$/.test(hashStr)) {
+        errors.push(`Satır ${i + 1} (2 sütun): access hash tam sayı olmalı`)
+        continue
+      }
+      targets.push(`__peer_user__:${idStr}:${hashStr}`)
+      continue
+    }
+
+    if (parts.length !== 3) {
+      errors.push(
+        `Satır ${i + 1}: 2 sütun (kullanıcı ID | access hash) veya 3 sütun (kullanıcı adı | kullanıcı ID | access hash) kullanın`
+      )
+      continue
+    }
+    const idStr = parts[1]
+    const hashStr = parts[2]
+    if (!/^-?\d+$/.test(idStr)) {
+      errors.push(`Satır ${i + 1}: kullanıcı ID geçerli bir tam sayı olmalı`)
+      continue
+    }
+    if (!/^-?\d+$/.test(hashStr)) {
+      errors.push(`Satır ${i + 1}: access hash geçerli bir tam sayı olmalı`)
+      continue
+    }
+    const firstCol = parts[0].trim().replace(/^@/, '')
+    /** Telegram kullanıcı adı (5–32); varsa hedefe eklenir — gönderimde önce getEntity ile çözülür (hash oturuma özel olduğu için PEER_ID_INVALID riskini azaltır). */
+    const looksLikeUsername = /^[a-zA-Z][a-zA-Z0-9_]{4,31}$/.test(firstCol)
+    targets.push(
+      looksLikeUsername
+        ? `__peer_user__:${idStr}:${hashStr}:${firstCol}`
+        : `__peer_user__:${idStr}:${hashStr}`
+    )
+  }
+  return { targets, errors }
+}
+
+/** Özel liste metin kutusu için anlık doğrulama (UI geri bildirimi) */
+export function validateCustomPeerListInput(text: string): {
+  isValid: boolean
+  recipientCount: number
+  nonEmptyLineCount: number
+  issues: string[]
+} {
+  const raw = text.trim()
+  if (!raw) {
+    return { isValid: false, recipientCount: 0, nonEmptyLineCount: 0, issues: [] }
+  }
+
+  const lines = text.split(/\r?\n/)
+  const issues: string[] = []
+  let nonEmptyLineCount = 0
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line) continue
+    nonEmptyLineCount++
+
+    if (!line.includes('|')) {
+      const compact = line.replace(/\s+/g, ' ').trim()
+      if (/^-?\d+\s+-?\d+$/.test(compact)) {
+        issues.push(
+          `Satır ${i + 1}: Sütunları | (pipe) ile ayırın; boşluk yetmez. Örnek: 8360514410 | -3569048566089361204`
+        )
+      }
+    }
+  }
+
+  const { targets, errors } = parseCustomPeerList(text)
+  const merged = [...issues, ...errors]
+  const unique = Array.from(new Set(merged))
+
+  const isValid =
+    nonEmptyLineCount > 0 && errors.length === 0 && targets.length === nonEmptyLineCount
+
+  return {
+    isValid,
+    recipientCount: targets.length,
+    nonEmptyLineCount,
+    issues: unique,
+  }
+}
+
+/** Düzenleme için: saklı peer hedeflerini metin kutusunda göstermeye çevir (ham metin yoksa) */
+export function peerTargetsToCustomListLines(targets: string[]): string {
+  return targets
+    .map((t) => {
+      if (t.startsWith('__peer_user__:')) {
+        const p = t.split(':')
+        const uid = p[1]
+        const ah = p[2]
+        const un = p[3]
+        if (un && /^[a-zA-Z][a-zA-Z0-9_]{4,31}$/.test(un)) {
+          return `@${un} | ${uid} | ${ah}`
+        }
+        return `${uid} | ${ah}`
+      }
+      return t
+    })
+    .join('\n')
+}
+
 export interface TelegramClientWrapper {
   client: TelegramClient
   accountId: string
@@ -488,11 +610,28 @@ class TelegramManager {
             }
           }
           const userIdStr = parts[1]
-          const accessHashStr = parts.slice(2).join(':')
-          entity = new Api.InputPeerUser({
-            userId: returnBigInt(userIdStr),
-            accessHash: returnBigInt(accessHashStr),
-          })
+          const accessHashStr = parts[2]
+          const optionalUsername =
+            parts.length >= 4 && parts[3] && /^[a-zA-Z][a-zA-Z0-9_]{4,31}$/.test(parts[3])
+              ? parts[3]
+              : undefined
+
+          /** Access hash gönderen oturuma özeldir; başka oturumdan kopyalanmış hash PEER_ID_INVALID verir. Kullanıcı adı varsa önce çözümleme dene. */
+          if (optionalUsername) {
+            try {
+              entity = await client.getEntity(optionalUsername)
+            } catch {
+              entity = new Api.InputPeerUser({
+                userId: returnBigInt(userIdStr),
+                accessHash: returnBigInt(accessHashStr),
+              })
+            }
+          } else {
+            entity = new Api.InputPeerUser({
+              userId: returnBigInt(userIdStr),
+              accessHash: returnBigInt(accessHashStr),
+            })
+          }
         } else {
           // Username'den entity'yi al (hem kullanıcılar hem de gruplar için çalışır)
           entity = await client.getEntity(cleanUsername)
@@ -698,6 +837,12 @@ class TelegramManager {
         errorMessage = 'Bu kullanıcı sizi engellemiş'
       } else if (errorMsg.includes('CHAT_ADMIN_REQUIRED')) {
         errorMessage = 'Bu işlem için grup yöneticisi olmanız gerekiyor'
+      } else if (
+        errorMsg.includes('PEER_ID_INVALID') ||
+        lowerErrorMsg.includes('peer_id_invalid')
+      ) {
+        errorMessage =
+          'PEER_ID_INVALID: Kullanıcı ID + access hash çifti bu oturum için geçerli değil (hash genelde listeyi çıkaran hesaba özeldir). Kullanıcı adı satırda varsa uygulama önce onunla çözmeyi dener; yine de hata alırsanız özel listeyi bu gönderen hesaptan üretin veya manuel listede yalnızca @kullanıcı kullanın.'
       } else if (errorCode === 400) {
         errorMessage = `Telegram API hatası (400): ${errorMsg || 'Bilinmeyen hata'}`
       }

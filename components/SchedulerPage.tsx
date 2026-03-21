@@ -1,10 +1,31 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { Plus, Trash2, Play, Pause, Clock, Edit, Eye, EyeOff, Loader2, Users } from 'lucide-react'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { createPortal } from 'react-dom'
+import {
+  Plus,
+  Trash2,
+  Play,
+  Pause,
+  Clock,
+  Edit,
+  Eye,
+  EyeOff,
+  Loader2,
+  Users,
+  CheckCircle2,
+  AlertTriangle,
+} from 'lucide-react'
 import { useAppStore, ScheduledMessage } from '@/store/appStore'
 import { messageScheduler } from '@/lib/scheduler'
-import { telegramManager, memberToSendTarget, type JoinedGroupInfo } from '@/lib/telegram'
+import {
+  telegramManager,
+  memberToSendTarget,
+  parseCustomPeerList,
+  peerTargetsToCustomListLines,
+  validateCustomPeerListInput,
+  type JoinedGroupInfo,
+} from '@/lib/telegram'
 
 /** Yerel saat için datetime-local input değeri (YYYY-MM-DDTHH:mm) */
 function toDatetimeLocalString(d: Date): string {
@@ -35,16 +56,27 @@ export default function SchedulerPage() {
   const [delayBetweenMessages, setDelayBetweenMessages] = useState(3000) // 3 saniye
   const [delayBetweenAccounts, setDelayBetweenAccounts] = useState(5000) // 5 saniye
 
-  const [recipientMode, setRecipientMode] = useState<'manual' | 'group_members'>('manual')
+  const [recipientMode, setRecipientMode] = useState<'manual' | 'group_members' | 'custom_list'>('manual')
+  const [customListRaw, setCustomListRaw] = useState('')
   const [groupsForPicker, setGroupsForPicker] = useState<JoinedGroupInfo[]>([])
   const [selectedGroup, setSelectedGroup] = useState<JoinedGroupInfo | null>(null)
   const [loadingGroups, setLoadingGroups] = useState(false)
   const [groupsError, setGroupsError] = useState('')
 
+  const customListValidation = useMemo(
+    () => validateCustomPeerListInput(customListRaw),
+    [customListRaw]
+  )
+
   const connectedAccounts = accounts.filter((acc) => acc.isConnected)
   const initializedRef = useRef(false)
   const [timeRemaining, setTimeRemaining] = useState<Map<string, string>>(new Map())
   const [visiblePhones, setVisiblePhones] = useState<Set<string>>(new Set())
+  const [modalPortalReady, setModalPortalReady] = useState(false)
+
+  useEffect(() => {
+    setModalPortalReady(true)
+  }, [])
 
   useEffect(() => {
     if (!scheduledAt && !editingMessageId) {
@@ -211,31 +243,12 @@ export default function SchedulerPage() {
           await messageScheduler.scheduleMessage(
             scheduledMessage,
             (id) => messageTemplates.find((t) => t.id === id),
-            (id, sent, total) => {
-              console.log('📊 İlerleme güncellendi:', { id, sent, total })
-              const scheduledMessage = scheduledMessages.find((m) => m.id === id)
-              
-              // Eğer mesaj aktifse ve tüm mesajlar gönderildiyse veya işlem tamamlandıysa
-              if (scheduledMessage?.isActive) {
-                // Tüm mesajlar gönderildiyse veya executeMessage tamamlandıysa (son callback)
-                // Not: Bazı mesajlar atlanmış olabilir (failed groups), bu yüzden sent < total olabilir
-                // Ama executeMessage tamamlandı, bu yüzden mesaj tamamlandı sayılır
-                // isMessageActive kontrolü ile mesajın hala çalışıp çalışmadığını kontrol et
-                const isStillActive = messageScheduler.isMessageActive(id)
-                
-                if (sent >= total && total > 0) {
-                  console.log('🎉 Tüm mesajlar gönderildi, durum güncelleniyor:', id)
-                  updateScheduledMessage(id, { sentCount: sent, totalCount: total, isActive: false })
-                } else if (!isStillActive && sent > 0) {
-                  // Mesaj artık aktif değilse (executeMessage tamamlandı) ama sent < total
-                  // Bu durumda bazı mesajlar atlanmış olabilir, yine de mesaj tamamlandı sayılır
-                  console.log('🎉 Mesaj gönderimi tamamlandı (bazı mesajlar atlanmış olabilir), durum güncelleniyor:', id)
-                  updateScheduledMessage(id, { sentCount: sent, totalCount: total, isActive: false })
-                } else {
-                  updateScheduledMessage(id, { sentCount: sent, totalCount: total })
-                }
+            (id, sent, total, done) => {
+              console.log('📊 İlerleme güncellendi:', { id, sent, total, done })
+              /** done veya tümü gönderildi: store'daki isActive kapatılır (closure'daki eski scheduledMessages güvenilmez) */
+              if (done === true || (sent >= total && total > 0)) {
+                updateScheduledMessage(id, { sentCount: sent, totalCount: total, isActive: false })
               } else {
-                // Mesaj zaten aktif değilse sadece sayıları güncelle
                 updateScheduledMessage(id, { sentCount: sent, totalCount: total })
               }
             },
@@ -284,7 +297,12 @@ export default function SchedulerPage() {
     const accountIds = [selectedAccountId]
 
     if (recipientMode === 'manual' && !usernames.trim()) {
-      alert('Alıcı listesini doldurun veya grup modunu seçin')
+      alert('Alıcı listesini doldurun veya başka bir alıcı modunu seçin')
+      return
+    }
+
+    if (recipientMode === 'custom_list' && !customListRaw.trim()) {
+      alert('Özel listeyi yapıştırın (satır başına: kullanıcı ID | access hash veya kullanıcı | ID | access hash)')
       return
     }
 
@@ -295,8 +313,9 @@ export default function SchedulerPage() {
 
     let usernameList: string[] = []
     let totalCount = 0
-    let mode: 'manual' | 'group_members' = 'manual'
+    let mode: 'manual' | 'group_members' | 'custom_list' = 'manual'
     let groupTarget: JoinedGroupInfo | undefined
+    let savedCustomRaw: string | undefined = undefined
 
     if (recipientMode === 'manual') {
       usernameList = usernames
@@ -309,6 +328,20 @@ export default function SchedulerPage() {
       }
       totalCount = accountIds.length * usernameList.length
       mode = 'manual'
+    } else if (recipientMode === 'custom_list') {
+      const { targets, errors } = parseCustomPeerList(customListRaw)
+      if (errors.length > 0) {
+        alert(errors.join('\n'))
+        return
+      }
+      if (targets.length === 0) {
+        alert('En az bir geçerli satır girin.')
+        return
+      }
+      usernameList = targets
+      totalCount = accountIds.length * usernameList.length
+      mode = 'custom_list'
+      savedCustomRaw = customListRaw.trim()
     } else {
       const firstAccount = accounts.find((a) => a.id === selectedAccountId)
       if (!firstAccount?.sessionString) {
@@ -351,6 +384,7 @@ export default function SchedulerPage() {
           usernames: usernameList,
           recipientMode: mode,
           groupTarget: mode === 'group_members' ? groupTarget : undefined,
+          customListRaw: mode === 'custom_list' ? savedCustomRaw : undefined,
           messageTemplateId: selectedTemplateId,
           scheduledTime: scheduledDateTime,
           delayBetweenMessages,
@@ -366,6 +400,7 @@ export default function SchedulerPage() {
         usernames: usernameList,
         recipientMode: mode,
         groupTarget: mode === 'group_members' ? groupTarget : undefined,
+        customListRaw: mode === 'custom_list' ? savedCustomRaw : undefined,
         messageTemplateId: selectedTemplateId,
         scheduledTime: scheduledDateTime,
         delayBetweenMessages,
@@ -384,6 +419,7 @@ export default function SchedulerPage() {
 
   const resetForm = () => {
     setRecipientMode('manual')
+    setCustomListRaw('')
     setSelectedGroup(null)
     setGroupsForPicker([])
     setGroupsError('')
@@ -412,9 +448,16 @@ export default function SchedulerPage() {
     const rm = scheduledMessage.recipientMode ?? 'manual'
     setRecipientMode(rm)
     setSelectedGroup(scheduledMessage.groupTarget ?? null)
-    setUsernames(
-      rm === 'group_members' ? '' : scheduledMessage.usernames.join('\n')
-    )
+    if (rm === 'custom_list') {
+      setCustomListRaw(
+        scheduledMessage.customListRaw ??
+          peerTargetsToCustomListLines(scheduledMessage.usernames ?? [])
+      )
+      setUsernames('')
+    } else {
+      setCustomListRaw('')
+      setUsernames(rm === 'group_members' ? '' : scheduledMessage.usernames.join('\n'))
+    }
     setSelectedTemplateId(scheduledMessage.messageTemplateId)
     
     setScheduledAt(toDatetimeLocalString(new Date(scheduledMessage.scheduledTime)))
@@ -450,27 +493,11 @@ export default function SchedulerPage() {
     await messageScheduler.scheduleMessage(
       scheduledMessage,
       (id) => messageTemplates.find((t) => t.id === id),
-      (id, sent, total) => {
-        console.log('📊 İlerleme güncellendi:', { id, sent, total })
-        const msg = scheduledMessages.find((m) => m.id === id)
-        
-        if (msg?.isActive) {
-          // Tüm mesajlar gönderildiyse veya executeMessage tamamlandıysa (son callback)
-          const isStillActive = messageScheduler.isMessageActive(id)
-          
-          if (sent >= total && total > 0) {
-            console.log('🎉 Tüm mesajlar gönderildi, durum güncelleniyor:', id)
-            updateScheduledMessage(id, { sentCount: sent, totalCount: total, isActive: false })
-          } else if (!isStillActive && sent > 0) {
-            // Mesaj artık aktif değilse (executeMessage tamamlandı) ama sent < total
-            // Bu durumda bazı mesajlar atlanmış olabilir, yine de mesaj tamamlandı sayılır
-            console.log('🎉 Mesaj gönderimi tamamlandı (bazı mesajlar atlanmış olabilir), durum güncelleniyor:', id)
-            updateScheduledMessage(id, { sentCount: sent, totalCount: total, isActive: false })
-          } else {
-            updateScheduledMessage(id, { sentCount: sent, totalCount: total })
-          }
+      (id, sent, total, done) => {
+        console.log('📊 İlerleme güncellendi:', { id, sent, total, done })
+        if (done === true || (sent >= total && total > 0)) {
+          updateScheduledMessage(id, { sentCount: sent, totalCount: total, isActive: false })
         } else {
-          // Mesaj zaten aktif değilse sadece sayıları güncelle
           updateScheduledMessage(id, { sentCount: sent, totalCount: total })
         }
       },
@@ -676,6 +703,8 @@ export default function SchedulerPage() {
                               <Users className="inline w-3 h-3 mr-1 opacity-70 align-text-bottom" />
                               {scheduledMessage.groupTarget.title} — tüm üyeler
                             </>
+                          ) : (scheduledMessage.recipientMode ?? 'manual') === 'custom_list' ? (
+                            <>Özel liste (ID + access hash): {scheduledMessage.usernames?.length || 0} alıcı</>
                           ) : (
                             <>{scheduledMessage.usernames?.length || 0} alıcı</>
                           )}
@@ -752,16 +781,33 @@ export default function SchedulerPage() {
         </div>
       )}
 
-      {showAddModal && (
-        <div className="fixed inset-0 surface-modal-overlay backdrop-blur-md flex items-center justify-center z-50 p-4 fade-in">
-          <div className="surface-modal rounded-2xl px-6 pt-6 pb-4 w-full max-w-xl shadow-2xl fade-in relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -mr-32 -mt-32" />
-            <div className="absolute bottom-0 left-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -ml-32 -mb-32" />
-            
-            <h3 className="text-xl font-bold text-white mb-4 tracking-tight relative z-10">
+      {modalPortalReady &&
+        showAddModal &&
+        createPortal(
+          <div className="fixed inset-0 surface-modal-overlay backdrop-blur-md z-[100] overflow-y-auto overflow-x-hidden fade-in flex min-h-0 items-start justify-center p-4 sm:p-6 sm:items-center">
+          <div
+            className="surface-modal isolate rounded-2xl w-full max-w-xl shadow-2xl fade-in relative flex flex-col max-h-[min(92vh,calc(100dvh-2rem))] min-h-0 my-auto overflow-hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="scheduler-modal-title"
+          >
+            <div
+              className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-2xl"
+              aria-hidden
+            >
+              <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -mr-32 -mt-32" />
+              <div className="absolute bottom-0 left-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -ml-32 -mb-32" />
+            </div>
+
+            <h3
+              id="scheduler-modal-title"
+              className="text-xl font-bold text-white px-6 pt-6 pb-3 tracking-tight relative z-20 shrink-0 rounded-t-2xl border-b border-white/[0.08] bg-[rgba(10,10,12,0.98)] backdrop-blur-md"
+            >
               {editingMessageId ? 'Zamanlamayı Düzenle' : 'Yeni Zamanlama'}
             </h3>
-            <div className="space-y-4 relative z-10">
+
+            <div className="relative z-10 flex-1 min-h-0 overflow-y-auto overscroll-contain px-6 py-4">
+            <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3">
                 <div className="flex items-center gap-2 min-w-0 flex-1 sm:max-w-md">
                   <label
@@ -814,6 +860,18 @@ export default function SchedulerPage() {
                       Seçili gruptaki tüm üyelere (hesabın gruplarından seçin)
                     </span>
                   </label>
+                  <label className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-white/5 border border-white/5">
+                    <input
+                      type="radio"
+                      name="recipientMode"
+                      checked={recipientMode === 'custom_list'}
+                      onChange={() => setRecipientMode('custom_list')}
+                      className="accent-white"
+                    />
+                    <span className="text-white text-sm">
+                      Özel liste (ID | hash veya kullanıcı | ID | hash)
+                    </span>
+                  </label>
                 </div>
 
                 {recipientMode === 'manual' ? (
@@ -830,6 +888,65 @@ export default function SchedulerPage() {
                     />
                     <p className="text-xs text-white/40 mt-2 font-medium">
                       Kullanıcılar: kullanici_adi veya @kullanici_adi · Gruplar: @grup_adi
+                    </p>
+                  </>
+                ) : recipientMode === 'custom_list' ? (
+                  <>
+                    <label className="block text-xs font-semibold text-white/70 mb-1">
+                      Özel alıcı listesi (satır başına iki veya üç sütun)
+                    </label>
+                    <textarea
+                      value={customListRaw}
+                      onChange={(e) => setCustomListRaw(e.target.value)}
+                      placeholder={
+                        '8561815348 | -8130815157666801329\n@kullanici | 6042072565 | 2382142223508890304'
+                      }
+                      rows={8}
+                      className={`input-focus w-full px-3 py-2.5 rounded-xl text-white placeholder-white/25 focus:outline-none resize-y text-sm font-mono transition-shadow ${
+                        customListRaw.trim() && customListValidation.isValid
+                          ? 'ring-2 ring-emerald-500/35'
+                          : customListRaw.trim() && !customListValidation.isValid
+                            ? 'ring-2 ring-amber-500/30'
+                            : ''
+                      }`}
+                    />
+                    {customListRaw.trim() !== '' && (
+                      <div className="mt-2 space-y-2" aria-live="polite">
+                        {customListValidation.isValid ? (
+                          <div className="flex items-center gap-2 rounded-lg border border-emerald-500/35 bg-emerald-500/[0.12] px-3 py-2.5 text-xs text-emerald-100/95">
+                            <CheckCircle2 size={17} className="shrink-0 text-emerald-400" aria-hidden />
+                            <span className="font-semibold">
+                              Format doğru — {customListValidation.recipientCount} alıcı
+                            </span>
+                          </div>
+                        ) : (
+                          <>
+                            {customListValidation.issues.length > 0 && (
+                              <div className="rounded-lg border border-amber-500/30 bg-amber-500/[0.1] px-3 py-2.5 text-xs">
+                                <div className="flex items-center gap-2 font-semibold text-amber-200/95 mb-1.5">
+                                  <AlertTriangle size={15} className="shrink-0 text-amber-400" aria-hidden />
+                                  Düzeltme gerekli
+                                </div>
+                                <ul className="list-disc pl-4 space-y-1 text-amber-100/85 leading-snug">
+                                  {customListValidation.issues.slice(0, 10).map((msg, idx) => (
+                                    <li key={idx}>{msg}</li>
+                                  ))}
+                                </ul>
+                                {customListValidation.issues.length > 10 && (
+                                  <p className="mt-1.5 text-amber-200/55 pl-4">… ve diğerleri</p>
+                                )}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                    <p className="text-xs text-white/40 mt-2 font-medium leading-relaxed">
+                      <span className="text-white/55">2 sütun:</span> kullanıcı ID <span className="text-white/55">|</span> access
+                      hash (Gruplar üyesi tablosundan kopyalayabilirsiniz).{' '}
+                      <span className="text-white/55">3 sütun:</span> kullanıcı adı (isteğe @){' '}
+                      <span className="text-white/55">|</span> ID <span className="text-white/55">|</span> hash — geçerli
+                      kullanıcı adı varsa önce o ile çözülür. Boş satırlar yok sayılır.
                     </p>
                   </>
                 ) : (
@@ -941,28 +1058,28 @@ export default function SchedulerPage() {
                   </p>
                 </div>
               </div>
+            </div>
+            </div>
 
-              <div className="flex gap-3 -mt-2">
-                <button
-                  onClick={() => {
-                    setShowAddModal(false)
-                    resetForm()
-                  }}
-                  className="flex-1 px-4 py-3 bg-white/10 hover:bg-white/15 text-white rounded-xl font-bold border border-white/10 hover:border-white/20 transition-all relative z-10"
-                >
-                  İptal
-                </button>
-                <button
-                  onClick={handleAdd}
-                  className="btn-primary flex-1 px-4 py-3 rounded-xl font-bold relative z-10"
-                >
-                  {editingMessageId ? 'Kaydet' : 'Ekle'}
-                </button>
-              </div>
+            <div className="shrink-0 relative z-20 flex gap-3 px-6 py-4 border-t border-white/[0.08] bg-[rgba(10,10,12,0.98)] backdrop-blur-md rounded-b-2xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddModal(false)
+                  resetForm()
+                }}
+                className="flex-1 px-4 py-3 bg-white/10 hover:bg-white/15 text-white rounded-xl font-bold border border-white/10 hover:border-white/20 transition-all"
+              >
+                İptal
+              </button>
+              <button type="button" onClick={handleAdd} className="btn-primary flex-1 px-4 py-3 rounded-xl font-bold">
+                {editingMessageId ? 'Kaydet' : 'Ekle'}
+              </button>
             </div>
           </div>
-        </div>
-      )}
+        </div>,
+          document.body
+        )}
     </div>
   )
 }

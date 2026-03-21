@@ -40,8 +40,10 @@ export interface ScheduledMessage {
   id: string
   accountIds: string[]
   usernames: string[]
-  /** Varsayılan: manuel liste. group_members ise gönderim anında groupTarget üyeleri kullanılır. */
-  recipientMode?: 'manual' | 'group_members'
+  /** Varsayılan: manuel liste. group_members ise gönderim anında groupTarget üyeleri kullanılır. custom_list: kullanıcı|id|hash yapıştırılmış metin. */
+  recipientMode?: 'manual' | 'group_members' | 'custom_list'
+  /** custom_list seçildiğinde orijinal metin (düzenleme ekranı için) */
+  customListRaw?: string
   groupTarget?: JoinedGroupInfo
   messageTemplateId: string
   scheduledTime: Date
