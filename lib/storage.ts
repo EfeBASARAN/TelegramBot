@@ -1,5 +1,7 @@
 // LocalStorage ile veri saklama ve yükleme
 
+import type { JoinedGroupInfo } from '@/lib/telegram'
+
 const STORAGE_KEYS = {
   ACCOUNTS: 'telegram_accounts',
   MESSAGE_TEMPLATES: 'telegram_message_templates',
@@ -30,6 +32,8 @@ export interface StoredScheduledMessage {
   id: string
   accountIds: string[]
   usernames: string[]
+  recipientMode?: 'manual' | 'group_members'
+  groupTarget?: JoinedGroupInfo
   messageTemplateId: string
   scheduledTime: string // ISO string
   delayBetweenMessages: number
@@ -122,10 +126,10 @@ export const loadScheduledMessages = (): Array<Omit<StoredScheduledMessage, 'sch
       
       const messages = JSON.parse(data)
       // Date string'lerini Date objelerine çevir - geçersiz tarihleri filtrele
-      return messages
-        .map((msg: StoredScheduledMessage) => {
+      type Row = Omit<StoredScheduledMessage, 'scheduledTime'> & { scheduledTime: Date }
+      return (messages as StoredScheduledMessage[])
+        .map((msg: StoredScheduledMessage): Row | null => {
           const date = new Date(msg.scheduledTime)
-          // Geçersiz tarihleri atla
           if (isNaN(date.getTime())) {
             return null
           }
@@ -134,7 +138,7 @@ export const loadScheduledMessages = (): Array<Omit<StoredScheduledMessage, 'sch
             scheduledTime: date,
           }
         })
-        .filter((msg) => msg !== null) as Array<Omit<StoredScheduledMessage, 'scheduledTime'> & { scheduledTime: Date }>
+        .filter((msg): msg is Row => msg !== null)
     } catch (error) {
       console.error('Scheduled messages yüklenemedi:', error)
       return []

@@ -1,6 +1,70 @@
 import { TelegramClient } from 'telegram'
 import { StringSession } from 'telegram/sessions'
 import { Api } from 'telegram'
+import { returnBigInt } from 'telegram/Helpers'
+
+/** Gruplar / süper gruplar / kanallar listesi için özet bilgi */
+export interface JoinedGroupInfo {
+  id: string
+  title: string
+  username?: string
+  typeLabel: string
+  membersCount?: number
+  isPublic: boolean
+  /** Telegram masaüstü / API ile uyumlu sohbet kimliği (örn. -100… ) */
+  peerKey?: string
+  /** Kanal/süper grup için getParticipants (kullanıcı adı yoksa gerekli) */
+  accessHash?: string
+  /** Sohbet diyalogundan (getDialogs) */
+  unreadCount?: number
+  pinned?: boolean
+  /** Son mesajın tarihi (ISO) */
+  lastActivityAt?: string
+  /** Son mesaj metni özeti */
+  lastMessagePreview?: string
+}
+
+function messagePreviewFromDialogMessage(msg: unknown): string | undefined {
+  if (!msg || typeof msg !== 'object') return undefined
+  const m = msg as { text?: string | (() => string); message?: string }
+  let raw = ''
+  if (typeof m.text === 'string') raw = m.text
+  else if (typeof m.text === 'function') {
+    try {
+      raw = m.text()
+    } catch {
+      raw = ''
+    }
+  } else {
+    raw = (m.message as string) || ''
+  }
+  raw = raw.trim()
+  if (!raw) return undefined
+  const oneLine = raw.replace(/\s+/g, ' ')
+  return oneLine.length > 100 ? `${oneLine.slice(0, 97)}…` : oneLine
+}
+
+export interface GroupMemberInfo {
+  id: string
+  firstName?: string
+  lastName?: string
+  username?: string
+  isBot?: boolean
+  /** DM için gerekli (kullanıcı adı yoksa) */
+  accessHash?: string
+}
+
+/** Zamanlayıcı / toplu gönderim: üyeyi sendMessage hedef dizesine çevirir */
+export function memberToSendTarget(m: GroupMemberInfo): string | null {
+  if (m.isBot) return null
+  if (m.username) {
+    return m.username.replace(/^@/, '')
+  }
+  if (m.accessHash) {
+    return `__peer_user__:${m.id}:${m.accessHash}`
+  }
+  return null
+}
 
 export interface TelegramClientWrapper {
   client: TelegramClient
@@ -412,15 +476,32 @@ class TelegramManager {
       // Telegram'ın getEntity metodu hem @ ile hem de @ olmadan çalışır
       // Gruplar için @ işareti gerekli olabilir, bu yüzden koruyoruz
       const cleanUsername = username.trim()
-      
-      // Username'den entity'yi al (hem kullanıcılar hem de gruplar için çalışır)
+
       let entity
       try {
-        entity = await client.getEntity(cleanUsername)
+        if (cleanUsername.startsWith('__peer_user__:')) {
+          const parts = cleanUsername.split(':')
+          if (parts.length < 3 || parts[0] !== '__peer_user__') {
+            return {
+              success: false,
+              error: 'Geçersiz iç hedef (üye kimliği)',
+            }
+          }
+          const userIdStr = parts[1]
+          const accessHashStr = parts.slice(2).join(':')
+          entity = new Api.InputPeerUser({
+            userId: returnBigInt(userIdStr),
+            accessHash: returnBigInt(accessHashStr),
+          })
+        } else {
+          // Username'den entity'yi al (hem kullanıcılar hem de gruplar için çalışır)
+          entity = await client.getEntity(cleanUsername)
+        }
+        const ent = entity as { id?: unknown; userId?: unknown; className?: string }
         console.log('✅ Entity bulundu:', {
           username,
-          entityId: entity.id,
-          entityType: entity.className
+          entityId: ent.id ?? ent.userId,
+          entityType: ent.className ?? 'InputPeerUser',
         })
       } catch (entityError: any) {
         console.error('❌ Entity bulunamadı:', {
@@ -471,11 +552,12 @@ class TelegramManager {
         }
       }
       
+      const entForLog = entity as { id?: unknown; userId?: unknown; className?: string }
       console.log('📤 Mesaj gönderiliyor:', {
         accountId,
         username,
-        entityId: entity.id,
-        entityType: entity.className,
+        entityId: entForLog.id ?? entForLog.userId,
+        entityType: entForLog.className ?? 'InputPeerUser',
         messagePreview: message.substring(0, 50) + '...'
       })
       
@@ -623,6 +705,212 @@ class TelegramManager {
       return {
         success: false,
         error: errorMessage,
+      }
+    }
+  }
+
+  private async ensureClientForAccount(
+    accountId: string,
+    sessionString?: string,
+    phoneNumber?: string,
+    apiId?: string,
+    apiHash?: string
+  ): Promise<{ ok: true; client: TelegramClient } | { ok: false; error: string }> {
+    if (apiId && apiHash) {
+      this.setApiConfig(apiId, apiHash)
+    }
+    let wrapper = this.clients.get(accountId)
+    if (!wrapper || !wrapper.isConnected) {
+      if (!sessionString || !phoneNumber) {
+        return {
+          ok: false,
+          error:
+            'Hesap bağlı değil veya oturum bilgisi yok. Hesaplar sayfasından hesabı bağlayın.',
+        }
+      }
+      const reconnectResult = await this.connectAccount(accountId, phoneNumber, sessionString)
+      if (!reconnectResult.success) {
+        return { ok: false, error: reconnectResult.error || 'Yeniden bağlanılamadı' }
+      }
+      wrapper = this.clients.get(accountId)
+    }
+    if (!wrapper || !wrapper.isConnected || !wrapper.client) {
+      return { ok: false, error: 'Telegram istemcisi hazır değil' }
+    }
+    return { ok: true, client: wrapper.client }
+  }
+
+  /**
+   * Hesabın sohbet listesinden grup, süper grup ve kanalları döndürür (özel sohbetler hariç).
+   */
+  async getJoinedGroups(
+    accountId: string,
+    sessionString?: string,
+    phoneNumber?: string,
+    apiId?: string,
+    apiHash?: string
+  ): Promise<{ success: boolean; error?: string; groups?: JoinedGroupInfo[] }> {
+    try {
+      const ready = await this.ensureClientForAccount(
+        accountId,
+        sessionString,
+        phoneNumber,
+        apiId,
+        apiHash
+      )
+      if (!ready.ok) {
+        return { success: false, error: ready.error }
+      }
+      const client = ready.client
+      const dialogs = await client.getDialogs({ limit: 200 })
+      const groups: JoinedGroupInfo[] = []
+
+      for (const d of dialogs) {
+        const entity = d.entity
+        if (!entity) continue
+
+        if (entity instanceof Api.User) continue
+        if (entity instanceof Api.ChatForbidden || entity instanceof Api.ChannelForbidden) continue
+
+        const customDialog = d as {
+          unreadCount?: number
+          pinned?: boolean
+          message?: { date?: number }
+        }
+        const unreadCount = customDialog.unreadCount ?? 0
+        const pinned = customDialog.pinned ?? false
+        let lastActivityAt: string | undefined
+        let lastMessagePreview: string | undefined
+        const msg = customDialog.message as { date?: number } | undefined
+        if (msg?.date != null) {
+          lastActivityAt = new Date(msg.date * 1000).toISOString()
+        }
+        lastMessagePreview = messagePreviewFromDialogMessage(customDialog.message)
+
+        const extras = {
+          unreadCount,
+          pinned,
+          lastActivityAt,
+          lastMessagePreview,
+        }
+
+        if (entity instanceof Api.Channel) {
+          if (entity.left) continue
+          let typeLabel = 'Kanal'
+          if (entity.megagroup) typeLabel = 'Süper grup'
+          else if (entity.broadcast) typeLabel = 'Yayın kanalı'
+          groups.push({
+            id: entity.id.toString(),
+            title: entity.title || 'İsimsiz',
+            username: entity.username || undefined,
+            typeLabel,
+            membersCount: entity.participantsCount ?? undefined,
+            isPublic: !!entity.username,
+            peerKey: `-100${entity.id}`,
+            accessHash: entity.accessHash?.toString(),
+            ...extras,
+          })
+        } else if (entity instanceof Api.Chat) {
+          groups.push({
+            id: entity.id.toString(),
+            title: entity.title || 'İsimsiz',
+            typeLabel: 'Grup',
+            membersCount: entity.participantsCount ?? undefined,
+            isPublic: false,
+            peerKey: `-${entity.id}`,
+            ...extras,
+          })
+        }
+      }
+
+      groups.sort((a, b) => a.title.localeCompare(b.title, 'tr', { sensitivity: 'base' }))
+      return { success: true, groups }
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || error.errorMessage || 'Grup listesi alınamadı',
+      }
+    }
+  }
+
+  /**
+   * Grup / süper grup / kanal üyelerini listeler (Telegram izin ve gizlilik kurallarına tabidir).
+   */
+  async getGroupParticipants(
+    accountId: string,
+    sessionString: string | undefined,
+    phoneNumber: string | undefined,
+    apiId: string | undefined,
+    apiHash: string | undefined,
+    group: JoinedGroupInfo
+  ): Promise<{ success: boolean; error?: string; members?: GroupMemberInfo[] }> {
+    try {
+      const ready = await this.ensureClientForAccount(
+        accountId,
+        sessionString,
+        phoneNumber,
+        apiId,
+        apiHash
+      )
+      if (!ready.ok) {
+        return { success: false, error: ready.error }
+      }
+      const client = ready.client
+
+      let entity: Api.TypeInputPeer | string | Api.InputChannel | Api.InputPeerChat
+
+      if (group.username) {
+        const u = group.username.startsWith('@') ? group.username : `@${group.username}`
+        entity = u
+      } else if (group.accessHash != null && group.accessHash !== '') {
+        entity = new Api.InputChannel({
+          channelId: returnBigInt(group.id),
+          accessHash: returnBigInt(group.accessHash),
+        })
+      } else if (group.typeLabel === 'Grup') {
+        entity = new Api.InputPeerChat({
+          chatId: returnBigInt(group.id),
+        })
+      } else {
+        return {
+          success: false,
+          error:
+            'Bu sohbet için üye listesi alınamıyor (kullanıcı adı veya kanal tanımı eksik). Gruplar listesini yenileyin.',
+        }
+      }
+
+      const participantOpts =
+        group.typeLabel === 'Grup'
+          ? { limit: 200 }
+          : { limit: 200, filter: new Api.ChannelParticipantsRecent() }
+
+      const participants = await client.getParticipants(entity, participantOpts)
+
+      const members: GroupMemberInfo[] = []
+      for (const p of participants) {
+        if (p instanceof Api.User) {
+          members.push({
+            id: p.id.toString(),
+            firstName: p.firstName,
+            lastName: p.lastName,
+            username: p.username,
+            isBot: !!p.bot,
+            accessHash: p.accessHash != null ? p.accessHash.toString() : undefined,
+          })
+        }
+      }
+
+      members.sort((a, b) => {
+        const na = [a.firstName, a.lastName].filter(Boolean).join(' ') || a.username || a.id
+        const nb = [b.firstName, b.lastName].filter(Boolean).join(' ') || b.username || b.id
+        return na.localeCompare(nb, 'tr', { sensitivity: 'base' })
+      })
+
+      return { success: true, members }
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || error.errorMessage || 'Üye listesi alınamadı',
       }
     }
   }

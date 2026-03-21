@@ -1,12 +1,24 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Plus, Trash2, Play, Pause, Clock, Edit, Eye, EyeOff } from 'lucide-react'
+import { Plus, Trash2, Play, Pause, Clock, Edit, Eye, EyeOff, Loader2, Users } from 'lucide-react'
 import { useAppStore, ScheduledMessage } from '@/store/appStore'
 import { messageScheduler } from '@/lib/scheduler'
+import { telegramManager, memberToSendTarget, type JoinedGroupInfo } from '@/lib/telegram'
+
+/** Yerel saat için datetime-local input değeri (YYYY-MM-DDTHH:mm) */
+function toDatetimeLocalString(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const h = String(d.getHours()).padStart(2, '0')
+  const min = String(d.getMinutes()).padStart(2, '0')
+  return `${y}-${m}-${day}T${h}:${min}`
+}
 
 export default function SchedulerPage() {
   const accounts = useAppStore((state) => state.accounts)
+  const apiConfig = useAppStore((state) => state.apiConfig)
   const messageTemplates = useAppStore((state) => state.messageTemplates)
   const scheduledMessages = useAppStore((state) => state.scheduledMessages)
   const addScheduledMessage = useAppStore((state) => state.addScheduledMessage)
@@ -16,34 +28,78 @@ export default function SchedulerPage() {
 
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
-  const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([])
+  const [selectedAccountId, setSelectedAccountId] = useState('')
   const [usernames, setUsernames] = useState('')
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
-  const [scheduledDate, setScheduledDate] = useState('')
-  const [scheduledTime, setScheduledTime] = useState('')
+  const [scheduledAt, setScheduledAt] = useState('')
   const [delayBetweenMessages, setDelayBetweenMessages] = useState(3000) // 3 saniye
   const [delayBetweenAccounts, setDelayBetweenAccounts] = useState(5000) // 5 saniye
 
-  // Bugünün tarihini formatla (YYYY-MM-DD)
-  const getTodayDate = () => {
-    const today = new Date()
-    const year = today.getFullYear()
-    const month = String(today.getMonth() + 1).padStart(2, '0')
-    const day = String(today.getDate()).padStart(2, '0')
-    return `${year}-${month}-${day}`
-  }
+  const [recipientMode, setRecipientMode] = useState<'manual' | 'group_members'>('manual')
+  const [groupsForPicker, setGroupsForPicker] = useState<JoinedGroupInfo[]>([])
+  const [selectedGroup, setSelectedGroup] = useState<JoinedGroupInfo | null>(null)
+  const [loadingGroups, setLoadingGroups] = useState(false)
+  const [groupsError, setGroupsError] = useState('')
 
   const connectedAccounts = accounts.filter((acc) => acc.isConnected)
   const initializedRef = useRef(false)
   const [timeRemaining, setTimeRemaining] = useState<Map<string, string>>(new Map())
   const [visiblePhones, setVisiblePhones] = useState<Set<string>>(new Set())
 
-  // Tarih alanını bugünün tarihi ile başlat
   useEffect(() => {
-    if (!scheduledDate && !editingMessageId) {
-      setScheduledDate(getTodayDate())
+    if (!scheduledAt && !editingMessageId) {
+      setScheduledAt(toDatetimeLocalString(new Date()))
     }
   }, [])
+
+  useEffect(() => {
+    if (!showAddModal || recipientMode !== 'group_members') return
+    if (!selectedAccountId) {
+      setGroupsForPicker([])
+      setGroupsError('')
+      return
+    }
+    const account = accounts.find((a) => a.id === selectedAccountId)
+    if (!account?.sessionString) {
+      setGroupsForPicker([])
+      setGroupsError('Seçili hesapta oturum yok')
+      return
+    }
+    let cancelled = false
+    setLoadingGroups(true)
+    setGroupsError('')
+    const apiId = account.apiId || apiConfig?.apiId
+    const apiHash = account.apiHash || apiConfig?.apiHash
+    void telegramManager
+      .getJoinedGroups(
+        account.id,
+        account.sessionString,
+        account.phoneNumber,
+        apiId,
+        apiHash
+      )
+      .then((res) => {
+        if (cancelled) return
+        if (res.success && res.groups) {
+          setGroupsForPicker(res.groups)
+          setGroupsError('')
+        } else {
+          setGroupsForPicker([])
+          setGroupsError(res.error || 'Gruplar yüklenemedi')
+        }
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return
+        setGroupsForPicker([])
+        setGroupsError(e instanceof Error ? e.message : 'Hata')
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingGroups(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [showAddModal, recipientMode, selectedAccountId, accounts, apiConfig])
 
   // Kalan süreyi hesapla ve güncelle (tüm mesajlar için)
   useEffect(() => {
@@ -213,59 +269,110 @@ export default function SchedulerPage() {
     initializeActiveMessages()
   }, [scheduledMessages, messageTemplates, accounts, updateScheduledMessage, addErrorLog])
 
-  const handleAdd = () => {
-    if (
-      selectedAccountIds.length === 0 ||
-      !usernames.trim() ||
-      !selectedTemplateId ||
-      !scheduledDate ||
-      !scheduledTime
-    ) {
-      alert('Hesap, alıcı listesi, şablon ve tarih/saat alanlarını doldurun')
+  const handleAdd = async () => {
+    if (!selectedAccountId || !selectedTemplateId || !scheduledAt) {
+      alert('Hesap, şablon ve gönderim tarihi/saati alanlarını doldurun')
       return
     }
 
-    const usernameList = usernames
-      .split('\n')
-      .map((u) => u.trim())
-      .filter((u) => u.length > 0)
-
-    if (usernameList.length === 0) {
-      alert('En az bir alıcı kullanıcı adı veya kanal tanımlayın')
+    const scheduledDateTime = new Date(scheduledAt)
+    if (Number.isNaN(scheduledDateTime.getTime())) {
+      alert('Geçerli bir tarih ve saat seçin')
       return
     }
 
-    const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`)
+    const accountIds = [selectedAccountId]
+
+    if (recipientMode === 'manual' && !usernames.trim()) {
+      alert('Alıcı listesini doldurun veya grup modunu seçin')
+      return
+    }
+
+    if (recipientMode === 'group_members' && !selectedGroup) {
+      alert('Bir grup seçin')
+      return
+    }
+
+    let usernameList: string[] = []
+    let totalCount = 0
+    let mode: 'manual' | 'group_members' = 'manual'
+    let groupTarget: JoinedGroupInfo | undefined
+
+    if (recipientMode === 'manual') {
+      usernameList = usernames
+        .split('\n')
+        .map((u) => u.trim())
+        .filter((u) => u.length > 0)
+      if (usernameList.length === 0) {
+        alert('En az bir alıcı kullanıcı adı veya kanal tanımlayın')
+        return
+      }
+      totalCount = accountIds.length * usernameList.length
+      mode = 'manual'
+    } else {
+      const firstAccount = accounts.find((a) => a.id === selectedAccountId)
+      if (!firstAccount?.sessionString) {
+        alert('Grup üyelerini kullanmak için seçili hesabın oturumu açık olmalı')
+        return
+      }
+      const apiId = firstAccount.apiId || apiConfig?.apiId
+      const apiHash = firstAccount.apiHash || apiConfig?.apiHash
+      const res = await telegramManager.getGroupParticipants(
+        firstAccount.id,
+        firstAccount.sessionString,
+        firstAccount.phoneNumber,
+        apiId,
+        apiHash,
+        selectedGroup!
+      )
+      if (!res.success) {
+        alert(res.error || 'Üye listesi alınamadı')
+        return
+      }
+      const n = (res.members || [])
+        .map((m) => memberToSendTarget(m))
+        .filter((x): x is string => Boolean(x)).length
+      if (n === 0) {
+        alert('Bu grupta özel mesaj gönderilecek üye yok (yalnızca botlar veya eksik kimlik)')
+        return
+      }
+      usernameList = []
+      totalCount = accountIds.length * n
+      mode = 'group_members'
+      groupTarget = selectedGroup!
+    }
 
     // Düzenleme modunda mı?
     if (editingMessageId) {
-      // Mevcut mesajı güncelle
-      const existingMessage = scheduledMessages.find(m => m.id === editingMessageId)
+      const existingMessage = scheduledMessages.find((m) => m.id === editingMessageId)
       if (existingMessage) {
         updateScheduledMessage(editingMessageId, {
-          accountIds: selectedAccountIds,
+          accountIds,
           usernames: usernameList,
+          recipientMode: mode,
+          groupTarget: mode === 'group_members' ? groupTarget : undefined,
           messageTemplateId: selectedTemplateId,
           scheduledTime: scheduledDateTime,
           delayBetweenMessages,
           delayBetweenAccounts,
-          totalCount: selectedAccountIds.length * usernameList.length,
-          sentCount: 0, // Düzenleme yapıldığında gönderim sayısını sıfırla
+          totalCount,
+          sentCount: 0,
         })
       }
     } else {
-      // Yeni mesaj ekle
       const newScheduledMessage: ScheduledMessage = {
         id: Date.now().toString(),
-        accountIds: selectedAccountIds,
+        accountIds,
         usernames: usernameList,
+        recipientMode: mode,
+        groupTarget: mode === 'group_members' ? groupTarget : undefined,
         messageTemplateId: selectedTemplateId,
         scheduledTime: scheduledDateTime,
         delayBetweenMessages,
         delayBetweenAccounts,
         isActive: false,
         sentCount: 0,
-        totalCount: selectedAccountIds.length * usernameList.length,
+        totalCount,
       }
 
       addScheduledMessage(newScheduledMessage)
@@ -276,12 +383,15 @@ export default function SchedulerPage() {
   }
 
   const resetForm = () => {
+    setRecipientMode('manual')
+    setSelectedGroup(null)
+    setGroupsForPicker([])
+    setGroupsError('')
     setEditingMessageId(null)
-    setSelectedAccountIds([])
+    setSelectedAccountId('')
     setUsernames('')
     setSelectedTemplateId('')
-    setScheduledDate(getTodayDate()) // Bugünün tarihi varsayılan
-    setScheduledTime('')
+    setScheduledAt(toDatetimeLocalString(new Date()))
     setDelayBetweenMessages(3000)
     setDelayBetweenAccounts(5000)
   }
@@ -298,20 +408,16 @@ export default function SchedulerPage() {
 
     // Formu doldur
     setEditingMessageId(scheduledMessage.id)
-    setSelectedAccountIds(scheduledMessage.accountIds)
-    setUsernames(scheduledMessage.usernames.join('\n'))
+    setSelectedAccountId(scheduledMessage.accountIds[0] ?? '')
+    const rm = scheduledMessage.recipientMode ?? 'manual'
+    setRecipientMode(rm)
+    setSelectedGroup(scheduledMessage.groupTarget ?? null)
+    setUsernames(
+      rm === 'group_members' ? '' : scheduledMessage.usernames.join('\n')
+    )
     setSelectedTemplateId(scheduledMessage.messageTemplateId)
     
-    // Tarih ve saati formatla
-    const date = new Date(scheduledMessage.scheduledTime)
-    const year = date.getFullYear()
-    const month = String(date.getMonth() + 1).padStart(2, '0')
-    const day = String(date.getDate()).padStart(2, '0')
-    const hours = String(date.getHours()).padStart(2, '0')
-    const minutes = String(date.getMinutes()).padStart(2, '0')
-    
-    setScheduledDate(`${year}-${month}-${day}`)
-    setScheduledTime(`${hours}:${minutes}`)
+    setScheduledAt(toDatetimeLocalString(new Date(scheduledMessage.scheduledTime)))
     setDelayBetweenMessages(scheduledMessage.delayBetweenMessages)
     setDelayBetweenAccounts(scheduledMessage.delayBetweenAccounts)
     
@@ -431,7 +537,7 @@ export default function SchedulerPage() {
         <div>
           <h2 className="text-4xl font-bold text-white mb-3 gradient-text tracking-tight">Zamanlayıcı</h2>
           <p className="text-white/50 text-base font-medium max-w-2xl">
-            Tarih ve saat seçin, hesapları ve alıcıları eşleyin; mesajlar arası ve hesaplar arası gecikmeyi
+            Tarih ve saat seçin, hesabı ve alıcıları eşleyin; mesajlar arası ve hesaplar arası gecikmeyi
             saniye cinsinden ayarlayın. Plan tek seferlik çalışır.
           </p>
         </div>
@@ -495,7 +601,7 @@ export default function SchedulerPage() {
             Planlanmış gönderim yok
           </h3>
           <p className="text-white/50 text-sm mb-8 font-medium max-w-md mx-auto">
-            Zamanlama Ekle ile şablon, hesaplar, alıcı kullanıcı adları ve gönderim zamanını seçin.
+            Zamanlama Ekle ile şablon, hesap, alıcılar ve gönderim zamanını seçin.
           </p>
         </div>
       ) : (
@@ -563,7 +669,17 @@ export default function SchedulerPage() {
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-white/50 font-semibold min-w-[100px] text-xs">Alıcılar:</span>
-                        <span className="text-white font-medium text-xs">{scheduledMessage.usernames?.length || 0} alıcı</span>
+                        <span className="text-white font-medium text-xs line-clamp-2">
+                          {(scheduledMessage.recipientMode ?? 'manual') === 'group_members' &&
+                          scheduledMessage.groupTarget ? (
+                            <>
+                              <Users className="inline w-3 h-3 mr-1 opacity-70 align-text-bottom" />
+                              {scheduledMessage.groupTarget.title} — tüm üyeler
+                            </>
+                          ) : (
+                            <>{scheduledMessage.usernames?.length || 0} alıcı</>
+                          )}
+                        </span>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-white/50 font-semibold min-w-[100px] text-xs">Mesajlar Arası:</span>
@@ -646,54 +762,113 @@ export default function SchedulerPage() {
               {editingMessageId ? 'Zamanlamayı Düzenle' : 'Yeni Zamanlama'}
             </h3>
             <div className="space-y-4 relative z-10">
-              <div>
-                <label className="block text-sm font-bold text-white mb-2 tracking-tight">
-                  Hesaplar (En az bir hesap seçin)
-                </label>
-                <div className="space-y-1.5 max-h-32 overflow-y-auto bg-black/40 p-3 rounded-xl border border-white/10">
-                  {connectedAccounts.map((account) => (
-                    <label
-                      key={account.id}
-                      className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-white/5 transition-colors"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedAccountIds.includes(account.id)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedAccountIds([...selectedAccountIds, account.id])
-                          } else {
-                            setSelectedAccountIds(
-                              selectedAccountIds.filter((id) => id !== account.id)
-                            )
-                          }
-                        }}
-                        className="w-4 h-4 accent-white"
-                      />
-                      <span className="text-white font-medium">
-                        {account.firstName || account.phoneNumber}
-                        {account.username && <span className="text-white/50"> (@{account.username})</span>}
-                      </span>
-                    </label>
-                  ))}
+              <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3">
+                <div className="flex items-center gap-2 min-w-0 flex-1 sm:max-w-md">
+                  <label
+                    htmlFor="scheduler-account"
+                    className="text-sm text-white/50 font-medium shrink-0"
+                  >
+                    Hesap
+                  </label>
+                  <select
+                    id="scheduler-account"
+                    value={selectedAccountId}
+                    onChange={(e) => setSelectedAccountId(e.target.value)}
+                    className="input-focus flex-1 min-w-0 px-4 py-2.5 rounded-xl text-white text-sm"
+                  >
+                    <option value="">— Hesap seçin —</option>
+                    {connectedAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.firstName || a.phoneNumber}
+                        {a.username ? ` (@${a.username})` : ''}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-bold text-white mb-2 tracking-tight">
-                  Kullanıcı/Grup Adları (Her satıra bir kullanıcı veya grup adı)
-                </label>
-                <textarea
-                  value={usernames}
-                  onChange={(e) => setUsernames(e.target.value)}
-                  placeholder="kullanici1&#10;@grup_adi&#10;kullanici2"
-                  rows={4}
-                  className="input-focus w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none resize-none text-sm"
-                />
-                <p className="text-xs text-white/40 mt-2 font-medium">
-                  Kullanıcılar için: kullanici_adi veya @kullanici_adi<br />
-                  Gruplar için: @grup_adi (public gruplar için)
-                </p>
+                <span className="block text-sm font-bold text-white mb-2 tracking-tight">
+                  Alıcılar
+                </span>
+                <div className="flex flex-col gap-2 mb-3">
+                  <label className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-white/5 border border-white/5">
+                    <input
+                      type="radio"
+                      name="recipientMode"
+                      checked={recipientMode === 'manual'}
+                      onChange={() => setRecipientMode('manual')}
+                      className="accent-white"
+                    />
+                    <span className="text-white text-sm">Manuel liste (satır satır kullanıcı / grup)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-white/5 border border-white/5">
+                    <input
+                      type="radio"
+                      name="recipientMode"
+                      checked={recipientMode === 'group_members'}
+                      onChange={() => setRecipientMode('group_members')}
+                      className="accent-white"
+                    />
+                    <span className="text-white text-sm">
+                      Seçili gruptaki tüm üyelere (hesabın gruplarından seçin)
+                    </span>
+                  </label>
+                </div>
+
+                {recipientMode === 'manual' ? (
+                  <>
+                    <label className="block text-xs font-semibold text-white/70 mb-1">
+                      Kullanıcı/Grup adları (her satıra bir)
+                    </label>
+                    <textarea
+                      value={usernames}
+                      onChange={(e) => setUsernames(e.target.value)}
+                      placeholder="kullanici1&#10;@grup_adi&#10;kullanici2"
+                      rows={4}
+                      className="input-focus w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none resize-none text-sm"
+                    />
+                    <p className="text-xs text-white/40 mt-2 font-medium">
+                      Kullanıcılar: kullanici_adi veya @kullanici_adi · Gruplar: @grup_adi
+                    </p>
+                  </>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-xs text-white/50">
+                      Gönderim, plan çalıştığında gruptan güncel üye listesi ile yapılır. Botlar atlanır.
+                    </p>
+                    {!selectedAccountId && (
+                      <p className="text-xs text-amber-400/90">Önce yukarıdan bir hesap seçin.</p>
+                    )}
+                    {loadingGroups && (
+                      <div className="flex items-center gap-2 text-white/60 text-sm py-2">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Gruplar yükleniyor…
+                      </div>
+                    )}
+                    {groupsError && (
+                      <p className="text-xs text-red-400">{groupsError}</p>
+                    )}
+                    {!loadingGroups && recipientMode === 'group_members' && selectedAccountId && (
+                      <select
+                        value={selectedGroup?.id ?? ''}
+                        onChange={(e) => {
+                          const g = groupsForPicker.find((x) => x.id === e.target.value)
+                          setSelectedGroup(g ?? null)
+                        }}
+                        className="input-focus w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-white focus:outline-none text-sm"
+                      >
+                        <option value="">Grup seçin…</option>
+                        {groupsForPicker.map((g) => (
+                          <option key={g.id} value={g.id}>
+                            {g.title}
+                            {g.username ? ` (@${g.username.replace(/^@/, '')})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -714,29 +889,20 @@ export default function SchedulerPage() {
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-bold text-white mb-2 tracking-tight">
-                    Tarih
-                  </label>
-                  <input
-                    type="date"
-                    value={scheduledDate || getTodayDate()}
-                    onChange={(e) => setScheduledDate(e.target.value)}
-                    className="input-focus w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-white focus:outline-none text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-white mb-2 tracking-tight">
-                    Saat
-                  </label>
-                  <input
-                    type="time"
-                    value={scheduledTime}
-                    onChange={(e) => setScheduledTime(e.target.value)}
-                    className="input-focus w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-white focus:outline-none text-sm"
-                  />
-                </div>
+              <div>
+                <label
+                  htmlFor="scheduler-datetime"
+                  className="block text-sm font-bold text-white mb-2 tracking-tight"
+                >
+                  Gönderim tarihi ve saati
+                </label>
+                <input
+                  id="scheduler-datetime"
+                  type="datetime-local"
+                  value={scheduledAt}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                  className="input-focus w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-white focus:outline-none text-sm [color-scheme:dark]"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-3">

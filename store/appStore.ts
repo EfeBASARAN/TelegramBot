@@ -16,6 +16,7 @@ import {
   type StoredApiConfig,
   type StoredErrorLog,
 } from '@/lib/storage'
+import type { JoinedGroupInfo } from '@/lib/telegram'
 
 export interface TelegramAccount {
   id: string
@@ -39,6 +40,9 @@ export interface ScheduledMessage {
   id: string
   accountIds: string[]
   usernames: string[]
+  /** Varsayılan: manuel liste. group_members ise gönderim anında groupTarget üyeleri kullanılır. */
+  recipientMode?: 'manual' | 'group_members'
+  groupTarget?: JoinedGroupInfo
   messageTemplateId: string
   scheduledTime: Date
   delayBetweenMessages: number // milliseconds
@@ -48,7 +52,7 @@ export interface ScheduledMessage {
   totalCount: number
 }
 
-type Page = 'accounts' | 'messages' | 'scheduler' | 'settings' | 'logs'
+type Page = 'accounts' | 'groups' | 'messages' | 'scheduler' | 'settings' | 'logs'
 
 export interface ErrorLog {
   id: string
@@ -85,7 +89,7 @@ interface AppState {
   addScheduledMessage: (message: ScheduledMessage) => void
   removeScheduledMessage: (id: string) => void
   updateScheduledMessage: (id: string, updates: Partial<ScheduledMessage>) => void
-  addErrorLog: (log: ErrorLog) => void
+  addErrorLog: (log: Omit<ErrorLog, 'id'>) => void
   clearErrorLogs: () => void
   loadFromStorage: () => void
 }

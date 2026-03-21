@@ -1,4 +1,4 @@
-import { telegramManager } from './telegram'
+import { telegramManager, memberToSendTarget } from './telegram'
 import { ScheduledMessage } from '@/store/appStore'
 
 class MessageScheduler {
@@ -140,14 +140,44 @@ class MessageScheduler {
       contentPreview: template.content.substring(0, 100) + '...'
     })
 
+    const recipientMode = scheduledMessage.recipientMode ?? 'manual'
+    let effectiveUsernames = [...scheduledMessage.usernames]
+
+    if (recipientMode === 'group_members' && scheduledMessage.groupTarget) {
+      const firstAccountId = scheduledMessage.accountIds[0]
+      const accountInfo = getAccountInfo?.(firstAccountId)
+      if (!accountInfo?.sessionString) {
+        this.activeExecutions.delete(executionKey)
+        throw new Error('Grup üyeleri alınamadı: ilk hesabın oturumu yok')
+      }
+      const res = await telegramManager.getGroupParticipants(
+        firstAccountId,
+        accountInfo.sessionString,
+        accountInfo.phoneNumber,
+        accountInfo.apiId,
+        accountInfo.apiHash,
+        scheduledMessage.groupTarget
+      )
+      if (!res.success || !res.members?.length) {
+        this.activeExecutions.delete(executionKey)
+        throw new Error(res.error || 'Üye listesi alınamadı')
+      }
+      effectiveUsernames = res.members
+        .map((m) => memberToSendTarget(m))
+        .filter((x): x is string => Boolean(x))
+      if (effectiveUsernames.length === 0) {
+        this.activeExecutions.delete(executionKey)
+        throw new Error('Gönderilecek üye yok (tümü bot veya kimlik eksik)')
+      }
+    }
+
     let sentCount = 0
-    const totalCount =
-      scheduledMessage.accountIds.length * scheduledMessage.usernames.length
+    const totalCount = scheduledMessage.accountIds.length * effectiveUsernames.length
 
     console.log('📊 ========== GÖNDERİM PLANI ==========')
     console.log('📊 Plan detayları:', {
       accountCount: scheduledMessage.accountIds.length,
-      usernameCount: scheduledMessage.usernames.length,
+      usernameCount: effectiveUsernames.length,
       totalMessages: totalCount,
       delayBetweenMessages: scheduledMessage.delayBetweenMessages,
       delayBetweenMessagesSeconds: scheduledMessage.delayBetweenMessages / 1000,
@@ -177,10 +207,11 @@ class MessageScheduler {
       let accountErrorMessages: string[] = [] // Bu hesap için alınan hatalar
       
       console.log('🔄 ========== KULLANICI/GRUP DÖNGÜSÜ BAŞLADI ==========')
-      console.log('🔄 Toplam alıcı sayısı:', scheduledMessage.usernames.length)
-      console.log('🔄 Alıcılar:', scheduledMessage.usernames)
+      console.log('🔄 Toplam alıcı sayısı:', effectiveUsernames.length)
+      console.log('🔄 Alıcılar:', effectiveUsernames)
       
-      for (const username of scheduledMessage.usernames) {
+      for (let i = 0; i < effectiveUsernames.length; i++) {
+        const username = effectiveUsernames[i]
         // Eğer bu hesap kritik hata aldıysa, bu hesap için döngüyü kır
         if (accountRateLimited || accountHasCriticalError) {
           const reason = accountRateLimited ? 'rate limit' : 'kritik hata'
@@ -193,13 +224,13 @@ class MessageScheduler {
           console.log(`⏭️ Bu grup daha önce başarısız oldu, atlanıyor:`, username)
           continue
         }
-        const usernameIndex = scheduledMessage.usernames.indexOf(username) + 1
+        const usernameIndex = i + 1
         console.log('📨 ========== MESAJ GÖNDERİMİ BAŞLADI ==========')
         console.log('📨 Mesaj bilgileri:', {
           accountId,
           username,
           usernameIndex,
-          totalUsernames: scheduledMessage.usernames.length,
+          totalUsernames: effectiveUsernames.length,
           accountIndex,
           totalAccounts: scheduledMessage.accountIds.length,
           currentProgress: `${sentCount}/${totalCount}`

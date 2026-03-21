@@ -8,6 +8,7 @@ import MessagesPage from '@/components/MessagesPage'
 import SchedulerPage from '@/components/SchedulerPage'
 import SettingsPage from '@/components/SettingsPage'
 import LogsPage from '@/components/LogsPage'
+import GroupsPage from '@/components/GroupsPage'
 import { useAppStore } from '@/store/appStore'
 import { telegramManager } from '@/lib/telegram'
 
@@ -223,6 +224,8 @@ export default function Home() {
         return <SettingsPage />
       case 'accounts':
         return <AccountsPage />
+      case 'groups':
+        return <GroupsPage />
       case 'messages':
         return <MessagesPage />
       case 'scheduler':

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Users, MessageSquare, Clock, Settings, AlertCircle } from 'lucide-react'
+import { Users, MessageSquare, Clock, Settings, AlertCircle, Hash } from 'lucide-react'
 import { useAppStore } from '@/store/appStore'
 import BrandLogo from '@/components/BrandLogo'
 import { BRAND_NAME, BRAND_TAGLINE, BRAND_VERSION } from '@/lib/brand'
@@ -54,6 +54,7 @@ export default function Sidebar() {
   const menuItems = [
     { id: 'settings', label: 'API rehberi', icon: Settings },
     { id: 'accounts', label: 'Hesaplar', icon: Users },
+    { id: 'groups', label: 'Gruplar', icon: Hash },
     { id: 'messages', label: 'Mesaj şablonları', icon: MessageSquare },
     { id: 'scheduler', label: 'Zamanlayıcı', icon: Clock },
     { id: 'logs', label: 'Gönderim günlüğü', icon: AlertCircle },
