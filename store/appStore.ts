@@ -49,6 +49,8 @@ export interface ScheduledMessage {
   scheduledTime: Date
   delayBetweenMessages: number // milliseconds
   delayBetweenAccounts: number // milliseconds
+  /** each_to_all: her hesap tüm alıcılara (hesap × alıcı). split_recipients: alıcı listesi hesaplara bölünür, her alıcıya bir gönderim. */
+  accountDistribution?: 'each_to_all' | 'split_recipients'
   isActive: boolean
   sentCount: number
   totalCount: number

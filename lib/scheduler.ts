@@ -5,6 +5,22 @@ import { buildSchedulerErrorLogParts, buildSchedulerSuccessLogParts } from './er
 import { formatUserFacingTelegramError } from './telegramErrorMessages'
 import { ScheduledMessage } from '@/store/appStore'
 
+/** Alıcıları sırayla hesaplara böler; ilk kalan öğeler ilk hesaplara düşer. */
+function splitRecipientsAcrossAccounts<T>(items: T[], accountCount: number): T[][] {
+  const chunks: T[][] = Array.from({ length: Math.max(0, accountCount) }, () => [])
+  if (accountCount <= 0 || items.length === 0) return chunks
+  const n = items.length
+  const base = Math.floor(n / accountCount)
+  const remainder = n % accountCount
+  let start = 0
+  for (let i = 0; i < accountCount; i++) {
+    const size = i < remainder ? base + 1 : base
+    chunks[i] = items.slice(start, start + size)
+    start += size
+  }
+  return chunks
+}
+
 class MessageScheduler {
   private timers: Map<string, NodeJS.Timeout> = new Map()
   private activeJobs: Map<string, boolean> = new Map()
@@ -235,11 +251,21 @@ class MessageScheduler {
     }
 
     let sentCount = 0
-    const totalCount = scheduledMessage.accountIds.length * recipients.length
+    const accountIds = scheduledMessage.accountIds
+    const distribution = scheduledMessage.accountDistribution ?? 'each_to_all'
+    const perAccountRecipients: RecipientRow[][] =
+      distribution === 'split_recipients'
+        ? splitRecipientsAcrossAccounts(recipients, accountIds.length)
+        : accountIds.map(() => recipients)
+    const totalCount =
+      distribution === 'split_recipients'
+        ? recipients.length
+        : accountIds.length * recipients.length
 
     console.log('📊 ========== GÖNDERİM PLANI ==========')
     console.log('📊 Plan detayları:', {
-      accountCount: scheduledMessage.accountIds.length,
+      accountDistribution: distribution,
+      accountCount: accountIds.length,
       usernameCount: recipients.length,
       totalMessages: totalCount,
       delayBetweenMessages: scheduledMessage.delayBetweenMessages,
@@ -249,20 +275,22 @@ class MessageScheduler {
     })
 
     console.log('🔄 ========== HESAPLAR DÖNGÜSÜ BAŞLADI ==========')
-    console.log('🔄 Toplam hesap sayısı:', scheduledMessage.accountIds.length)
-    console.log('🔄 Hesap ID\'leri:', scheduledMessage.accountIds)
+    console.log('🔄 Toplam hesap sayısı:', accountIds.length)
+    console.log('🔄 Hesap ID\'leri:', accountIds)
     
     // Tüm hesaplar için başarısız grupları takip et
     const globalFailedGroups = new Set<string>()
     
-    for (const accountId of scheduledMessage.accountIds) {
-      const accountIndex = scheduledMessage.accountIds.indexOf(accountId) + 1
+    for (let ai = 0; ai < accountIds.length; ai++) {
+      const accountId = accountIds[ai]
+      const accountRecipients = perAccountRecipients[ai] ?? []
+      const accountIndex = ai + 1
       console.log('👤 ========== HESAP İŞLENİYOR ==========')
       console.log('👤 Hesap bilgileri:', {
         accountId,
         accountIndex,
-        totalAccounts: scheduledMessage.accountIds.length,
-        remainingAccounts: scheduledMessage.accountIds.length - accountIndex
+        totalAccounts: accountIds.length,
+        remainingAccounts: accountIds.length - accountIndex
       })
       
       let accountRateLimited = false // Bu hesap için rate limit hatası alındı mı?
@@ -270,11 +298,11 @@ class MessageScheduler {
       let accountErrorMessages: string[] = [] // Bu hesap için alınan hatalar
       
       console.log('🔄 ========== KULLANICI/GRUP DÖNGÜSÜ BAŞLADI ==========')
-      console.log('🔄 Toplam alıcı sayısı:', recipients.length)
-      console.log('🔄 Alıcılar:', recipients.map((r) => ({ hedef: r.target, etiket: r.displayLabel })))
+      console.log('🔄 Bu hesap için alıcı sayısı:', accountRecipients.length)
+      console.log('🔄 Alıcılar:', accountRecipients.map((r) => ({ hedef: r.target, etiket: r.displayLabel })))
       
-      for (let i = 0; i < recipients.length; i++) {
-        const { target, displayLabel } = recipients[i]
+      for (let i = 0; i < accountRecipients.length; i++) {
+        const { target, displayLabel } = accountRecipients[i]
         // Eğer bu hesap kritik hata aldıysa, bu hesap için döngüyü kır
         if (accountRateLimited || accountHasCriticalError) {
           const reason = accountRateLimited ? 'rate limit' : 'kritik hata'
@@ -294,9 +322,9 @@ class MessageScheduler {
           username: target,
           displayLabel,
           usernameIndex,
-          totalUsernames: recipients.length,
+          totalUsernames: accountRecipients.length,
           accountIndex,
-          totalAccounts: scheduledMessage.accountIds.length,
+          totalAccounts: accountIds.length,
           currentProgress: `${sentCount}/${totalCount}`
         })
         
@@ -526,7 +554,7 @@ class MessageScheduler {
       console.log('🔄 ========== KULLANICI/GRUP DÖNGÜSÜ TAMAMLANDI ==========')
 
       // Her hesap arasında delay
-      if (scheduledMessage.accountIds.indexOf(accountId) < scheduledMessage.accountIds.length - 1) {
+      if (ai < accountIds.length - 1) {
         console.log('⏳ Hesaplar arası gecikme başlıyor:', scheduledMessage.delayBetweenAccounts, 'ms')
         await this.delay(scheduledMessage.delayBetweenAccounts)
         console.log('⏳ Hesaplar arası gecikme tamamlandı')
@@ -536,7 +564,7 @@ class MessageScheduler {
       console.log('👤 Hesap özeti:', {
         accountId,
         accountIndex,
-        totalAccounts: scheduledMessage.accountIds.length,
+        totalAccounts: accountIds.length,
         sentCount,
         totalCount,
         progress: `${sentCount}/${totalCount}`,

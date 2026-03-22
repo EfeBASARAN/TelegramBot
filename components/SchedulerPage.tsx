@@ -50,7 +50,11 @@ export default function SchedulerPage() {
 
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
-  const [selectedAccountId, setSelectedAccountId] = useState('')
+  /** Seçili hesaplar; sıra `connectedAccounts` listesindeki sıradır (bölüştürmede önemli). */
+  const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(() => new Set())
+  const [accountDistribution, setAccountDistribution] = useState<
+    'each_to_all' | 'split_recipients'
+  >('each_to_all')
   const [usernames, setUsernames] = useState('')
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
   const [scheduledAt, setScheduledAt] = useState('')
@@ -70,6 +74,8 @@ export default function SchedulerPage() {
   )
 
   const connectedAccounts = accounts.filter((acc) => acc.isConnected)
+  const firstSelectedAccountId =
+    connectedAccounts.find((a) => selectedAccountIds.has(a.id))?.id ?? ''
   const initializedRef = useRef(false)
   const [timeRemaining, setTimeRemaining] = useState<Map<string, string>>(new Map())
   const [visiblePhones, setVisiblePhones] = useState<Set<string>>(new Set())
@@ -87,12 +93,12 @@ export default function SchedulerPage() {
 
   useEffect(() => {
     if (!showAddModal || recipientMode !== 'group_members') return
-    if (!selectedAccountId) {
+    if (!firstSelectedAccountId) {
       setGroupsForPicker([])
       setGroupsError('')
       return
     }
-    const account = accounts.find((a) => a.id === selectedAccountId)
+    const account = accounts.find((a) => a.id === firstSelectedAccountId)
     if (!account?.sessionString) {
       setGroupsForPicker([])
       setGroupsError('Seçili hesapta oturum yok')
@@ -132,7 +138,7 @@ export default function SchedulerPage() {
     return () => {
       cancelled = true
     }
-  }, [showAddModal, recipientMode, selectedAccountId, accounts, apiConfig])
+  }, [showAddModal, recipientMode, firstSelectedAccountId, accounts, apiConfig])
 
   // Kalan süreyi hesapla ve güncelle (tüm mesajlar için)
   useEffect(() => {
@@ -281,8 +287,16 @@ export default function SchedulerPage() {
   }, [scheduledMessages, messageTemplates, accounts, updateScheduledMessage, addErrorLog, pushToast])
 
   const handleAdd = async () => {
-    if (!selectedAccountId || !selectedTemplateId || !scheduledAt) {
-      pushToast('Hesap, şablon ve gönderim tarihi/saati alanlarını doldurun', 'info')
+    if (!selectedTemplateId || !scheduledAt) {
+      pushToast('Şablon ve gönderim tarihi/saati alanlarını doldurun', 'info')
+      return
+    }
+
+    const accountIds = connectedAccounts
+      .filter((a) => selectedAccountIds.has(a.id))
+      .map((a) => a.id)
+    if (accountIds.length === 0) {
+      pushToast('En az bir bağlı hesap seçin', 'info')
       return
     }
 
@@ -291,8 +305,6 @@ export default function SchedulerPage() {
       pushToast('Geçerli bir tarih ve saat seçin', 'info')
       return
     }
-
-    const accountIds = [selectedAccountId]
 
     if (recipientMode === 'manual' && !usernames.trim()) {
       pushToast('Alıcı listesini doldurun veya başka bir alıcı modunu seçin', 'info')
@@ -327,7 +339,10 @@ export default function SchedulerPage() {
         pushToast('En az bir alıcı kullanıcı adı veya kanal tanımlayın', 'info')
         return
       }
-      totalCount = accountIds.length * usernameList.length
+      totalCount =
+        accountDistribution === 'split_recipients'
+          ? usernameList.length
+          : accountIds.length * usernameList.length
       mode = 'manual'
     } else if (recipientMode === 'custom_list') {
       const { targets, errors } = parseCustomPeerList(customListRaw)
@@ -340,11 +355,14 @@ export default function SchedulerPage() {
         return
       }
       usernameList = targets
-      totalCount = accountIds.length * usernameList.length
+      totalCount =
+        accountDistribution === 'split_recipients'
+          ? usernameList.length
+          : accountIds.length * usernameList.length
       mode = 'custom_list'
       savedCustomRaw = customListRaw.trim()
     } else {
-      const firstAccount = accounts.find((a) => a.id === selectedAccountId)
+      const firstAccount = accounts.find((a) => a.id === accountIds[0])
       if (!firstAccount?.sessionString) {
         pushToast('Grup üyelerini kullanmak için seçili hesabın oturumu açık olmalı', 'error')
         return
@@ -374,7 +392,8 @@ export default function SchedulerPage() {
         return
       }
       usernameList = []
-      totalCount = accountIds.length * n
+      totalCount =
+        accountDistribution === 'split_recipients' ? n : accountIds.length * n
       mode = 'group_members'
       groupTarget = selectedGroup!
     }
@@ -393,6 +412,7 @@ export default function SchedulerPage() {
           scheduledTime: scheduledDateTime,
           delayBetweenMessages,
           delayBetweenAccounts,
+          accountDistribution,
           totalCount,
           sentCount: 0,
         })
@@ -409,6 +429,7 @@ export default function SchedulerPage() {
         scheduledTime: scheduledDateTime,
         delayBetweenMessages,
         delayBetweenAccounts,
+        accountDistribution,
         isActive: false,
         sentCount: 0,
         totalCount,
@@ -428,7 +449,8 @@ export default function SchedulerPage() {
     setGroupsForPicker([])
     setGroupsError('')
     setEditingMessageId(null)
-    setSelectedAccountId('')
+    setSelectedAccountIds(new Set())
+    setAccountDistribution('each_to_all')
     setUsernames('')
     setSelectedTemplateId('')
     setScheduledAt(toDatetimeLocalString(new Date()))
@@ -448,7 +470,8 @@ export default function SchedulerPage() {
 
     // Formu doldur
     setEditingMessageId(scheduledMessage.id)
-    setSelectedAccountId(scheduledMessage.accountIds[0] ?? '')
+    setSelectedAccountIds(new Set(scheduledMessage.accountIds ?? []))
+    setAccountDistribution(scheduledMessage.accountDistribution ?? 'each_to_all')
     const rm = scheduledMessage.recipientMode ?? 'manual'
     setRecipientMode(rm)
     setSelectedGroup(scheduledMessage.groupTarget ?? null)
@@ -719,6 +742,14 @@ export default function SchedulerPage() {
                         <span className="text-white/50 font-semibold min-w-[100px] text-xs">Hesaplar Arası:</span>
                         <span className="text-white font-medium text-xs">{scheduledMessage.delayBetweenAccounts / 1000}s</span>
                       </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-white/50 font-semibold min-w-[100px] text-xs">Dağıtım:</span>
+                        <span className="text-white font-medium text-xs">
+                          {(scheduledMessage.accountDistribution ?? 'each_to_all') === 'split_recipients'
+                            ? 'Alıcılar bölündü'
+                            : 'Her hesap tümü'}
+                        </span>
+                      </div>
                       {scheduledMessage.isActive && (
                         <>
                           <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/10">
@@ -809,28 +840,93 @@ export default function SchedulerPage() {
 
             <div className="relative z-10 flex-1 min-h-0 overflow-y-auto overscroll-contain px-6 py-4">
             <div className="space-y-4">
-              <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3">
-                <div className="flex items-center gap-2 min-w-0 flex-1 sm:max-w-md">
-                  <label
-                    htmlFor="scheduler-account"
-                    className="text-sm text-white/50 font-medium shrink-0"
-                  >
-                    Hesap
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <span className="text-sm font-bold text-white tracking-tight">Hesaplar</span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSelectedAccountIds(new Set(connectedAccounts.map((a) => a.id)))
+                      }
+                      className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-white/80 border border-white/10"
+                    >
+                      Tümünü seç
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedAccountIds(new Set())}
+                      className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 border border-white/10"
+                    >
+                      Temizle
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs text-white/45 mb-2 leading-relaxed">
+                  Çoklu seçim: listedeki sıra, &quot;alıcıları böl&quot; modunda hangi aralığın hangi hesaba
+                  gideceğini belirler (üstten alta).
+                </p>
+                <div className="max-h-36 overflow-y-auto rounded-xl border border-white/10 bg-black/20 px-2 py-2 space-y-1.5">
+                  {connectedAccounts.length === 0 ? (
+                    <p className="text-xs text-amber-400/90 px-1 py-1">Bağlı hesap yok.</p>
+                  ) : (
+                    connectedAccounts.map((a) => (
+                      <label
+                        key={a.id}
+                        className="flex items-center gap-2 cursor-pointer rounded-lg px-2 py-1.5 hover:bg-white/5"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedAccountIds.has(a.id)}
+                          onChange={() => {
+                            setSelectedAccountIds((prev) => {
+                              const next = new Set(prev)
+                              if (next.has(a.id)) next.delete(a.id)
+                              else next.add(a.id)
+                              return next
+                            })
+                          }}
+                          className="accent-white shrink-0"
+                        />
+                        <span className="text-sm text-white/90 truncate">
+                          {a.firstName || a.phoneNumber}
+                          {a.username ? ` (@${a.username})` : ''}
+                        </span>
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <span className="block text-sm font-bold text-white mb-2 tracking-tight">
+                  Çoklu hesap kullanımı
+                </span>
+                <div className="flex flex-col gap-2">
+                  <label className="flex items-start gap-2 cursor-pointer p-2 rounded-lg hover:bg-white/5 border border-white/5">
+                    <input
+                      type="radio"
+                      name="accountDistribution"
+                      checked={accountDistribution === 'each_to_all'}
+                      onChange={() => setAccountDistribution('each_to_all')}
+                      className="accent-white mt-0.5 shrink-0"
+                    />
+                    <span className="text-white text-sm leading-snug">
+                      Her hesap tüm alıcılara göndersin (toplam: hesap sayısı × alıcı sayısı)
+                    </span>
                   </label>
-                  <select
-                    id="scheduler-account"
-                    value={selectedAccountId}
-                    onChange={(e) => setSelectedAccountId(e.target.value)}
-                    className="input-focus flex-1 min-w-0 px-4 py-2.5 rounded-xl text-white text-sm"
-                  >
-                    <option value="">— Hesap seçin —</option>
-                    {connectedAccounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.firstName || a.phoneNumber}
-                        {a.username ? ` (@${a.username})` : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <label className="flex items-start gap-2 cursor-pointer p-2 rounded-lg hover:bg-white/5 border border-white/5">
+                    <input
+                      type="radio"
+                      name="accountDistribution"
+                      checked={accountDistribution === 'split_recipients'}
+                      onChange={() => setAccountDistribution('split_recipients')}
+                      className="accent-white mt-0.5 shrink-0"
+                    />
+                    <span className="text-white text-sm leading-snug">
+                      Alıcıları hesaplara böl (her alıcıya tek gönderim; toplam ≈ alıcı sayısı)
+                    </span>
+                  </label>
                 </div>
               </div>
 
@@ -955,8 +1051,8 @@ export default function SchedulerPage() {
                     <p className="text-xs text-white/50">
                       Gönderim, plan çalıştığında gruptan güncel üye listesi ile yapılır. Botlar atlanır.
                     </p>
-                    {!selectedAccountId && (
-                      <p className="text-xs text-amber-400/90">Önce yukarıdan bir hesap seçin.</p>
+                    {!firstSelectedAccountId && (
+                      <p className="text-xs text-amber-400/90">Önce yukarıdan en az bir hesap seçin.</p>
                     )}
                     {loadingGroups && (
                       <div className="flex items-center gap-2 text-white/60 text-sm py-2">
@@ -967,7 +1063,7 @@ export default function SchedulerPage() {
                     {groupsError && (
                       <p className="text-xs text-red-400">{groupsError}</p>
                     )}
-                    {!loadingGroups && recipientMode === 'group_members' && selectedAccountId && (
+                    {!loadingGroups && recipientMode === 'group_members' && firstSelectedAccountId && (
                       <select
                         value={selectedGroup?.id ?? ''}
                         onChange={(e) => {

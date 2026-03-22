@@ -39,6 +39,7 @@ export interface StoredScheduledMessage {
   scheduledTime: string // ISO string
   delayBetweenMessages: number
   delayBetweenAccounts: number
+  accountDistribution?: 'each_to_all' | 'split_recipients'
   isActive: boolean
   sentCount: number
   totalCount: number
