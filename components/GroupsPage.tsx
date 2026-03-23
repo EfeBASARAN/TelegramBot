@@ -21,6 +21,7 @@ import {
 import { useAppStore } from '@/store/appStore'
 import { telegramManager, type JoinedGroupInfo, type GroupMemberInfo } from '@/lib/telegram'
 import { exportRowsToExcel, sanitizeExcelFilename } from '@/lib/excelExport'
+import { TELEGRAM_PARTICIPANTS_ADMIN_NOTICE_TR } from '@/lib/telegramErrorMessages'
 
 function formatListActivity(iso?: string): string {
   if (!iso) return ''
@@ -297,8 +298,10 @@ export default function GroupsPage() {
             <div>
               <h2 className="text-4xl font-bold text-white mb-3 gradient-text tracking-tight">Gruplar</h2>
               <p className="text-white/50 text-base font-medium max-w-2xl leading-relaxed">
-                Seçili hesabın Telegram sohbet listesindeki grup, süper grup ve kanallar gösterilir (özel kişi
-                sohbetleri dahil değildir). Veriler anlık olarak Telegram API ile çekilir.
+                Yalnızca üye listesini çekebileceğiniz sohbetler listelenir: klasik gruplar ve süper gruplar;
+                yayın kanalları ise hesabınızda yönetici veya kurucu olduğunuz takdirde. Abone olduğunuz
+                ama yönetici olmadığınız kanallar bu yüzden görünmez (özel kişi sohbetleri zaten dahil değildir).
+                Veriler Telegram API ile anlık çekilir.
               </p>
             </div>
           </div>
@@ -718,8 +721,8 @@ export default function GroupsPage() {
                 )}
 
               {!panelLoading && !panelErr && panelMembers && panelMembers.length === 0 && (
-                <p className="text-sm text-white/45 text-center py-12 px-2">
-                  Bu sohbet için üye döndürülmedi (yetki veya kanal türü).
+                <p className="text-sm text-white/70 text-center py-10 px-4 leading-relaxed max-w-lg mx-auto">
+                  {TELEGRAM_PARTICIPANTS_ADMIN_NOTICE_TR}
                 </p>
               )}
             </div>

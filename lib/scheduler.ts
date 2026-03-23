@@ -4,6 +4,32 @@ import { memberDisplayLabel, formatRecipientDisplayLabel } from './recipientLabe
 import { buildSchedulerErrorLogParts, buildSchedulerSuccessLogParts } from './errorLogHelpers'
 import { formatUserFacingTelegramError } from './telegramErrorMessages'
 import { ScheduledMessage } from '@/store/appStore'
+import { varyMessageAntiSpam } from '@/lib/antiSpamText'
+import { liveLog, trunc } from '@/lib/botLiveLog'
+
+/** Zamanlayıcıdaki mesajlar/hesaplar arası (ms) değerine göre her beklemede rastgele süre; üst/alt sınır otomatik. */
+function randomAntiSpamGapMs(baseMs: number): number {
+  const b = Math.max(2000, baseMs)
+  const lo = Math.max(2500, Math.round(b * 0.45))
+  const hi = Math.max(lo + 2000, Math.round(b * 2.85))
+  return lo + Math.floor(Math.random() * (hi - lo + 1))
+}
+
+function randomAntiSpamTailMs(): number {
+  return 500 + Math.floor(Math.random() * 1700)
+}
+
+type SchedulerTemplate = { content: string; name?: string; antiSpamDelay?: boolean }
+
+export type SchedulerOnProgressMeta = { completedKey?: string }
+
+export type SchedulerOnProgress = (
+  id: string,
+  sent: number,
+  total: number,
+  done?: boolean,
+  meta?: SchedulerOnProgressMeta
+) => void
 
 /** Alıcıları sırayla hesaplara böler; ilk kalan öğeler ilk hesaplara düşer. */
 function splitRecipientsAcrossAccounts<T>(items: T[], accountCount: number): T[][] {
@@ -28,9 +54,9 @@ class MessageScheduler {
 
   async scheduleMessage(
     scheduledMessage: ScheduledMessage,
-    getMessageTemplate: (id: string) => { content: string; name?: string } | undefined,
+    getMessageTemplate: (id: string) => SchedulerTemplate | undefined,
     /** done: executeMessage bittiğinde true (kısmi başarı dahil — UI isActive kapatır) */
-    onProgress?: (id: string, sent: number, total: number, done?: boolean) => void,
+    onProgress?: SchedulerOnProgress,
     getAccountInfo?: (accountId: string) => { sessionString?: string; phoneNumber?: string } | undefined,
     addErrorLog?: (log: {
       accountId: string
@@ -51,6 +77,7 @@ class MessageScheduler {
     const lic = await assertLicenseActive()
     if (!lic.ok) {
       console.warn('⚠️ Zamanlayıcı: lisans yok veya geçersiz:', lic.reason)
+      liveLog('warn', 'Zamanlayıcı: lisans kontrolü başarısız', lic.reason)
       return
     }
 
@@ -58,6 +85,7 @@ class MessageScheduler {
     
     if (this.activeJobs.get(scheduledMessage.id)) {
       console.log('⚠️ Mesaj zaten aktif, tekrar zamanlanmıyor:', scheduledMessage.id)
+      liveLog('info', 'Bu plan zaten çalışıyor — tekrar kuyruğa alınmadı', `id: ${scheduledMessage.id}`)
       return
     }
 
@@ -66,6 +94,12 @@ class MessageScheduler {
     const now = new Date().getTime()
     const scheduledTime = new Date(scheduledMessage.scheduledTime).getTime()
     const delay = Math.max(0, scheduledTime - now)
+
+    liveLog(
+      'step',
+      'Mesaj gönderim işlemi başlatıldı',
+      `Plan #${scheduledMessage.id} · ${delay <= 100 ? 'hemen çalıştırılıyor' : `~${Math.round(delay / 1000)} sn sonra tetiklenecek`}`
+    )
 
     console.log('⏰ Zamanlama detayları:', {
       id: scheduledMessage.id,
@@ -81,6 +115,7 @@ class MessageScheduler {
     if (delay <= 100) {
       // 100ms içindeyse hemen gönder
       console.log('⚡ Zaman geldi veya geçti, hemen gönderiliyor:', scheduledMessage.id)
+      liveLog('step', 'Planlanan zaman geldi — gönderim motoru başlıyor', `id: ${scheduledMessage.id}`)
       try {
         await this.executeMessage(
           scheduledMessage,
@@ -93,6 +128,7 @@ class MessageScheduler {
       } catch (error) {
         console.error('❌ Mesaj gönderim hatası:', scheduledMessage.id, error)
         const raw = error instanceof Error ? error.message : String(error)
+        liveLog('err', 'Gönderim hatası (anında çalıştırma)', trunc(raw, 200))
         onExecutionError?.(
           new Error(formatUserFacingTelegramError(raw, 'general')),
           scheduledMessage.id
@@ -106,8 +142,14 @@ class MessageScheduler {
     }
 
     // Gelecekteki mesajlar için timer oluştur
+    liveLog(
+      'info',
+      'Zamanlayıcı kuruldu — bekleniyor',
+      `~${Math.round(delay / 1000)} sn · ${new Date(scheduledTime).toLocaleString('tr-TR')}`
+    )
     const timer = setTimeout(async () => {
       try {
+        liveLog('step', 'Zamanlayıcı tetiklendi — gönderim başlıyor', `id: ${scheduledMessage.id}`)
         console.log('✅ ZAMAN GELDİ! Mesaj gönderiliyor:', scheduledMessage.id, 'Zaman:', new Date(scheduledMessage.scheduledTime).toISOString())
         console.log('📋 Mesaj detayları:', {
           accountIds: scheduledMessage.accountIds,
@@ -120,6 +162,7 @@ class MessageScheduler {
         console.error('❌ Mesaj gönderim hatası:', scheduledMessage.id, error)
         console.error('❌ Hata detayları:', error)
         const raw = error instanceof Error ? error.message : String(error)
+        liveLog('err', 'Gönderim hatası (zamanlanmış çalıştırma)', trunc(raw, 200))
         onExecutionError?.(
           new Error(formatUserFacingTelegramError(raw, 'general')),
           scheduledMessage.id
@@ -142,9 +185,9 @@ class MessageScheduler {
 
   private async executeMessage(
     scheduledMessage: ScheduledMessage,
-    getMessageTemplate: (id: string) => { content: string; name?: string } | undefined,
+    getMessageTemplate: (id: string) => SchedulerTemplate | undefined,
     /** done: executeMessage bittiğinde true (kısmi başarı dahil — UI isActive kapatır) */
-    onProgress?: (id: string, sent: number, total: number, done?: boolean) => void,
+    onProgress?: SchedulerOnProgress,
     getAccountInfo?: (accountId: string) => { sessionString?: string; phoneNumber?: string; apiId?: string; apiHash?: string } | undefined,
     addErrorLog?: (log: {
       accountId: string
@@ -163,6 +206,7 @@ class MessageScheduler {
     const lic = await assertLicenseActive()
     if (!lic.ok) {
       console.warn('⚠️ executeMessage: lisans yok veya geçersiz:', lic.reason)
+      liveLog('warn', 'executeMessage durdu: lisans', lic.reason)
       return
     }
 
@@ -172,6 +216,7 @@ class MessageScheduler {
     // Çift çalışmayı önle - eğer bu mesaj zaten çalışıyorsa, işlemi durdur
     if (!this.activeJobs.get(scheduledMessage.id)) {
       console.warn('⚠️ Mesaj aktif değil, executeMessage iptal ediliyor:', scheduledMessage.id)
+      liveLog('warn', 'Gönderim iptal — plan artık aktif değil', scheduledMessage.id)
       return
     }
     
@@ -179,6 +224,7 @@ class MessageScheduler {
     const executionKey = `exec_${scheduledMessage.id}`
     if (this.activeExecutions.has(executionKey)) {
       console.warn('⚠️ Bu mesaj zaten çalışıyor, tekrar çalıştırma iptal ediliyor:', scheduledMessage.id)
+      liveLog('info', 'Aynı plan için gönderim zaten sürüyor — çift çalıştırma yok', scheduledMessage.id)
       return
     }
     
@@ -201,8 +247,11 @@ class MessageScheduler {
       console.error('❌ ========== ŞABLON BULUNAMADI ==========')
       console.error('❌ Mesaj şablonu bulunamadı:', scheduledMessage.messageTemplateId)
       console.error('❌ Scheduled message:', scheduledMessage)
+      liveLog('err', 'Şablon bulunamadı — gönderim durdu', scheduledMessage.messageTemplateId)
       throw new Error(`Mesaj şablonu bulunamadı: ${scheduledMessage.messageTemplateId}`)
     }
+
+    liveLog('step', 'Şablon yüklendi, alıcılar hazırlanıyor', template.name || scheduledMessage.messageTemplateId)
 
     console.log('✅ Şablon bulundu:', {
       templateId: scheduledMessage.messageTemplateId,
@@ -210,6 +259,8 @@ class MessageScheduler {
       contentLength: template.content.length,
       contentPreview: template.content.substring(0, 100) + '...'
     })
+
+    const useAntiSpam = template.antiSpamDelay === true
 
     const recipientMode = scheduledMessage.recipientMode ?? 'manual'
     type RecipientRow = { target: string; displayLabel: string }
@@ -219,10 +270,17 @@ class MessageScheduler {
     }))
 
     if (recipientMode === 'group_members' && scheduledMessage.groupTarget) {
-      const firstAccountId = scheduledMessage.accountIds[0]
+      liveLog(
+        'step',
+        'Grup üyeleri Telegram’dan çekiliyor',
+        trunc(scheduledMessage.groupTarget.title, 80)
+      )
+      const firstAccountId =
+        scheduledMessage.groupListAccountId ?? scheduledMessage.accountIds[0]
       const accountInfo = getAccountInfo?.(firstAccountId)
       if (!accountInfo?.sessionString) {
         this.activeExecutions.delete(executionKey)
+        liveLog('err', 'Grup modu: hesap oturumu yok', firstAccountId)
         throw new Error('Grup üyeleri alınamadı: ilk hesabın oturumu yok')
       }
       const res = await telegramManager.getGroupParticipants(
@@ -235,8 +293,10 @@ class MessageScheduler {
       )
       if (!res.success || !res.members?.length) {
         this.activeExecutions.delete(executionKey)
+        liveLog('err', 'Grup üyeleri alınamadı', trunc(res.error || 'Bilinmeyen', 160))
         throw new Error(res.error || 'Üye listesi alınamadı')
       }
+      liveLog('ok', `Üye listesi alındı: ${res.members.length} kayıt`, 'Botlar ve eksik kimlikler sonradan elenir')
       recipients = res.members
         .map((m) => {
           const target = memberToSendTarget(m)
@@ -250,7 +310,6 @@ class MessageScheduler {
       }
     }
 
-    let sentCount = 0
     const accountIds = scheduledMessage.accountIds
     const distribution = scheduledMessage.accountDistribution ?? 'each_to_all'
     const perAccountRecipients: RecipientRow[][] =
@@ -262,12 +321,47 @@ class MessageScheduler {
         ? recipients.length
         : accountIds.length * recipients.length
 
+    const taskKeysForMessage = new Set<string>()
+    for (let ai = 0; ai < accountIds.length; ai++) {
+      const aid = accountIds[ai]
+      for (const row of perAccountRecipients[ai] ?? []) {
+        taskKeysForMessage.add(`${aid}::${row.target}`)
+      }
+    }
+    const completedKeySet = new Set(
+      (scheduledMessage.completedSendKeys ?? []).filter((k) => taskKeysForMessage.has(k))
+    )
+    let sentCount = completedKeySet.size
+
+    if (taskKeysForMessage.size > 0 && completedKeySet.size === taskKeysForMessage.size) {
+      console.log('✅ Tüm gönderimler önceki oturumda tamamlanmış (anahtarlar eşleşti), atlanıyor')
+      liveLog('ok', 'Bu planda zaten tüm başarılı gönderimler tamamlanmış — atlanıyor', scheduledMessage.id)
+      this.activeExecutions.delete(executionKey)
+      onProgress?.(scheduledMessage.id, sentCount, totalCount, true)
+      return
+    }
+
+    if (completedKeySet.size > 0) {
+      liveLog(
+        'info',
+        `Önceki oturumdan ${completedKeySet.size} başarılı gönderim atlanacak`,
+        'Çift mesaj önleniyor'
+      )
+    }
+
+    liveLog(
+      'step',
+      'Gönderim planı hazır',
+      `${totalCount} mesaj · ${accountIds.length} hesap · ${distribution === 'split_recipients' ? 'alıcılar bölündü' : 'her hesap tüm alıcılara'}`
+    )
+
     console.log('📊 ========== GÖNDERİM PLANI ==========')
     console.log('📊 Plan detayları:', {
       accountDistribution: distribution,
       accountCount: accountIds.length,
       usernameCount: recipients.length,
       totalMessages: totalCount,
+      antiSpamRandomGaps: useAntiSpam,
       delayBetweenMessages: scheduledMessage.delayBetweenMessages,
       delayBetweenMessagesSeconds: scheduledMessage.delayBetweenMessages / 1000,
       delayBetweenAccounts: scheduledMessage.delayBetweenAccounts,
@@ -285,6 +379,11 @@ class MessageScheduler {
       const accountId = accountIds[ai]
       const accountRecipients = perAccountRecipients[ai] ?? []
       const accountIndex = ai + 1
+      liveLog(
+        'step',
+        `Hesap sırası ${accountIndex}/${accountIds.length}`,
+        `Hesap ${trunc(accountId, 24)} · bu turda ${accountRecipients.length} alıcı`
+      )
       console.log('👤 ========== HESAP İŞLENİYOR ==========')
       console.log('👤 Hesap bilgileri:', {
         accountId,
@@ -315,6 +414,19 @@ class MessageScheduler {
           console.log(`⏭️ Bu grup daha önce başarısız oldu, atlanıyor:`, target)
           continue
         }
+
+        const pairKey = `${accountId}::${target}`
+        if (completedKeySet.has(pairKey)) {
+          console.log('⏭️ Önceden gönderilmiş (sayfa yenileme sonrası devam), atlanıyor:', pairKey)
+          continue
+        }
+
+        liveLog(
+          'step',
+          'Sıradaki alıcı için hazırlanıyor',
+          `${trunc(displayLabel, 48)} · ilerleme ${sentCount}/${totalCount}`
+        )
+
         const usernameIndex = i + 1
         console.log('📨 ========== MESAJ GÖNDERİMİ BAŞLADI ==========')
         console.log('📨 Mesaj bilgileri:', {
@@ -330,21 +442,43 @@ class MessageScheduler {
         
         if (!this.activeJobs.get(scheduledMessage.id)) {
           console.log('⚠️ Mesaj durduruldu, gönderim iptal ediliyor:', scheduledMessage.id)
+          liveLog('warn', 'Gönderim durduruldu (durdur veya iptal)', scheduledMessage.id)
           break
         }
 
-        // Telegram ban önleme: Her mesaj arasında delay
-        console.log('⏳ Mesajlar arası gecikme başlıyor:', scheduledMessage.delayBetweenMessages, 'ms')
-        await this.delay(scheduledMessage.delayBetweenMessages)
+        // Telegram ban önleme: sabit veya (şablonda) rastgele aralık
+        const baseGap = scheduledMessage.delayBetweenMessages
+        const gapMs = useAntiSpam ? randomAntiSpamGapMs(baseGap) : baseGap
+        liveLog(
+          'info',
+          `Mesajlar arası bekleme: ~${(gapMs / 1000).toFixed(1)} sn`,
+          useAntiSpam ? 'Anti-spam: rastgele aralık' : 'Sabit gecikme'
+        )
+        console.log(
+          '⏳ Mesajlar arası gecikme başlıyor:',
+          gapMs,
+          'ms',
+          useAntiSpam ? `(anti-spam, taban ${baseGap}ms)` : ''
+        )
+        await this.delay(gapMs)
         console.log('⏳ Mesajlar arası gecikme tamamlandı')
 
         try {
+          const outgoingText = useAntiSpam ? varyMessageAntiSpam(template.content) : template.content
+
+          liveLog(
+            'step',
+            'Telegram’a gönderim isteği gönderiliyor',
+            `${trunc(displayLabel, 40)} · ${trunc(template.name || 'Şablon', 32)}`
+          )
+
           console.log('📤 Mesaj gönderiliyor:', {
             accountId,
             username: target,
             displayLabel,
             template: template.name || 'İsimsiz',
-            contentPreview: template.content.substring(0, 50) + '...'
+            contentPreview: outgoingText.substring(0, 50) + '...',
+            antiSpamText: useAntiSpam,
           })
           
           // Account bilgilerini al (session string, phone number ve API bilgileri için)
@@ -375,11 +509,11 @@ class MessageScheduler {
               hasApiHash: !!accountInfo?.apiHash
             })
           }
-          
+
           const result = await telegramManager.sendMessage(
             accountId,
             target,
-            template.content,
+            outgoingText,
             accountInfo?.sessionString,
             accountInfo?.phoneNumber,
             accountInfo?.apiId,
@@ -395,6 +529,7 @@ class MessageScheduler {
 
           if (result.success) {
             sentCount++
+            completedKeySet.add(pairKey)
             console.log('✅ ========== MESAJ BAŞARILI ==========')
             console.log('✅ Mesaj başarıyla gönderildi:', accountId, '->', displayLabel, `(${sentCount}/${totalCount})`)
             
@@ -422,8 +557,18 @@ class MessageScheduler {
               })
             }
             
-            onProgress?.(scheduledMessage.id, sentCount, totalCount, false)
+            liveLog(
+              'ok',
+              'Gönderim başarılı — sıradaki adıma geçiliyor',
+              `${sentCount}/${totalCount} · ${trunc(displayLabel, 48)}`
+            )
+            onProgress?.(scheduledMessage.id, sentCount, totalCount, false, { completedKey: pairKey })
           } else {
+            liveLog(
+              'warn',
+              'Gönderim başarısız (sıradaki denemeye devam)',
+              `${trunc(displayLabel, 48)} · ${trunc(result.error || 'Hata', 120)}`
+            )
             console.error('❌ ========== MESAJ BAŞARISIZ ==========')
             console.error('❌ Mesaj gönderilemedi:', accountId, '->', displayLabel)
             console.error('❌ Hata mesajı:', result.error)
@@ -545,9 +690,10 @@ class MessageScheduler {
           progress: `${sentCount}/${totalCount}`
         })
 
-        // Her kullanıcıya mesaj gönderdikten sonra ek delay
-        console.log('⏳ Ek gecikme başlıyor: 1000ms')
-        await this.delay(1000) // Minimum 1 saniye
+        // Her kullanıcıya mesaj gönderdikten sonra ek delay (anti-spam açıksa hafif rastgele)
+        const tailMs = useAntiSpam ? randomAntiSpamTailMs() : 1000
+        console.log('⏳ Ek gecikme başlıyor:', tailMs, 'ms')
+        await this.delay(tailMs)
         console.log('⏳ Ek gecikme tamamlandı')
       }
       
@@ -555,8 +701,20 @@ class MessageScheduler {
 
       // Her hesap arasında delay
       if (ai < accountIds.length - 1) {
-        console.log('⏳ Hesaplar arası gecikme başlıyor:', scheduledMessage.delayBetweenAccounts, 'ms')
-        await this.delay(scheduledMessage.delayBetweenAccounts)
+        const accBase = scheduledMessage.delayBetweenAccounts
+        const accGap = useAntiSpam ? randomAntiSpamGapMs(accBase) : accBase
+        liveLog(
+          'info',
+          `Hesaplar arası bekleme: ~${(accGap / 1000).toFixed(1)} sn`,
+          'Sıradaki hesaba geçiliyor'
+        )
+        console.log(
+          '⏳ Hesaplar arası gecikme başlıyor:',
+          accGap,
+          'ms',
+          useAntiSpam ? `(anti-spam, taban ${accBase}ms)` : ''
+        )
+        await this.delay(accGap)
         console.log('⏳ Hesaplar arası gecikme tamamlandı')
       }
       
@@ -600,6 +758,11 @@ class MessageScheduler {
     // Not: Bazı mesajlar atlanmış olabilir (failed groups), bu yüzden sentCount < totalCount olabilir
     // Ama tüm hesaplar işlendi, bu yüzden mesaj tamamlandı sayılır
     console.log('🎉 Mesaj gönderimi tamamlandı!', scheduledMessage.id)
+    liveLog(
+      'ok',
+      'Gönderim turu tamamlandı',
+      `Plan ${scheduledMessage.id} · başarılı: ${sentCount}/${totalCount}`
+    )
     
     // Execution flag'ini temizle
     this.activeExecutions.delete(`exec_${scheduledMessage.id}`)
@@ -613,7 +776,15 @@ class MessageScheduler {
       clearTimeout(timer)
       this.timers.delete(id)
     }
+    const wasActive = this.activeJobs.get(id)
     this.activeJobs.delete(id)
+    if (wasActive) {
+      liveLog(
+        'warn',
+        timer ? 'Bekleyen zamanlayıcı iptal edildi' : 'Gönderim durduruldu',
+        `Plan ${id}`
+      )
+    }
   }
 
   private delay(ms: number): Promise<void> {

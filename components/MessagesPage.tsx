@@ -14,6 +14,7 @@ export default function MessagesPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [content, setContent] = useState('')
+  const [antiSpamDelay, setAntiSpamDelay] = useState(false)
 
   const handleAdd = () => {
     if (!name.trim() || !content.trim()) return
@@ -22,11 +23,13 @@ export default function MessagesPage() {
       id: Date.now().toString(),
       name: name.trim(),
       content: content.trim(),
+      antiSpamDelay: antiSpamDelay || undefined,
     }
 
     addMessageTemplate(newTemplate)
     setName('')
     setContent('')
+    setAntiSpamDelay(false)
     setShowAddModal(false)
   }
 
@@ -34,6 +37,7 @@ export default function MessagesPage() {
     setEditingId(template.id)
     setName(template.name)
     setContent(template.content)
+    setAntiSpamDelay(template.antiSpamDelay === true)
     setShowAddModal(true)
   }
 
@@ -43,10 +47,12 @@ export default function MessagesPage() {
     updateMessageTemplate(editingId, {
       name: name.trim(),
       content: content.trim(),
+      antiSpamDelay: antiSpamDelay || undefined,
     })
 
     setName('')
     setContent('')
+    setAntiSpamDelay(false)
     setEditingId(null)
     setShowAddModal(false)
   }
@@ -72,6 +78,7 @@ export default function MessagesPage() {
             setEditingId(null)
             setName('')
             setContent('')
+            setAntiSpamDelay(false)
             setShowAddModal(true)
           }}
           className="btn-primary flex items-center gap-2 px-6 py-3 rounded-xl font-bold"
@@ -103,8 +110,15 @@ export default function MessagesPage() {
             >
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full blur-2xl -mr-16 -mt-16" />
               
-              <div className="flex justify-between items-start mb-5 relative z-10">
-                <h3 className="font-bold text-white text-xl tracking-tight">{template.name}</h3>
+              <div className="flex justify-between items-start mb-5 relative z-10 gap-2">
+                <div className="min-w-0">
+                  <h3 className="font-bold text-white text-xl tracking-tight">{template.name}</h3>
+                  {template.antiSpamDelay && (
+                    <span className="inline-block mt-2 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300/95 border border-emerald-500/25">
+                      Anti-spam gecikme
+                    </span>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <button
                     onClick={() => handleEdit(template)}
@@ -162,6 +176,22 @@ export default function MessagesPage() {
                   className="input-focus w-full px-4 py-3.5 rounded-xl text-white placeholder-white/30 focus:outline-none resize-none"
                 />
               </div>
+              <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3.5 hover:bg-white/[0.05]">
+                <input
+                  type="checkbox"
+                  checked={antiSpamDelay}
+                  onChange={(e) => setAntiSpamDelay(e.target.checked)}
+                  className="accent-emerald-500 mt-0.5 shrink-0"
+                />
+                <span className="text-sm text-white/85 leading-snug">
+                  <span className="font-bold text-white">Anti-spam koruması</span>
+                  <span className="block text-white/50 text-xs mt-1 font-medium">
+                    Zamanlayıcıdaki mesajlar arası / hesaplar arası süreleri taban alarak bekleme sürelerini
+                    rastgele seçer. Ayrıca her gönderimde metni anlamı değiştirmeden hafifçe çeşitlendirir
+                    (boşluklar, görünmez karakterler, cümle başı) — birebir aynı metin imzasını zorlaştırır.
+                  </span>
+                </span>
+              </label>
               <div className="flex gap-3">
                 <button
                   onClick={() => {
@@ -169,6 +199,7 @@ export default function MessagesPage() {
                     setEditingId(null)
                     setName('')
                     setContent('')
+                    setAntiSpamDelay(false)
                   }}
                   className="flex-1 px-4 py-3 bg-white/10 hover:bg-white/15 text-white rounded-xl font-bold border border-white/10 hover:border-white/20 transition-all"
                 >

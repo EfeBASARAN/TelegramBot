@@ -3,6 +3,7 @@ import { StringSession } from 'telegram/sessions'
 import { Api } from 'telegram'
 import { returnBigInt } from 'telegram/Helpers'
 import { formatUserFacingTelegramError } from './telegramErrorMessages'
+import { liveLog, trunc } from '@/lib/botLiveLog'
 import { assertLicenseActive } from './licenseRuntime'
 
 /** Gruplar / süper gruplar / kanallar listesi için özet bilgi */
@@ -44,6 +45,21 @@ function messagePreviewFromDialogMessage(msg: unknown): string | undefined {
   if (!raw) return undefined
   const oneLine = raw.replace(/\s+/g, ' ')
   return oneLine.length > 100 ? `${oneLine.slice(0, 97)}…` : oneLine
+}
+
+/**
+ * Diyalogdaki Channel için channels.getParticipants (üye listesi) çağrısının
+ * tipik olarak anlamlı olup olmayacağı. Yayın kanallarında (broadcast, megagroup değil)
+ * Telegram listeyi çoğunlukla yalnızca yönetici / kurucu hesaplara verir.
+ * Klasik grup (Api.Chat) bu kontrolün dışındadır — her zaman listelenir.
+ */
+function channelEntityLikelyAllowsParticipantList(channel: Api.Channel): boolean {
+  if (channel.left) return false
+  if (channel.megagroup) return true
+  if (channel.broadcast) {
+    return !!(channel.creator || channel.adminRights)
+  }
+  return true
 }
 
 export interface GroupMemberInfo {
@@ -488,8 +504,10 @@ class TelegramManager {
   ): Promise<{ success: boolean; error?: string }> {
     const licErr = await this.requireLicenseOrError()
     if (licErr) {
+      liveLog('warn', 'Telegram gönderim: lisans', trunc(licErr, 120))
       return { success: false, error: licErr }
     }
+    liveLog('step', 'Telegram API: alıcı çözülüyor', trunc(username, 96))
     console.log('📨 ========== sendMessage BAŞLADI ==========')
     console.log('📨 Parametreler:', { 
       accountId, 
@@ -721,6 +739,7 @@ class TelegramManager {
       })
       
       console.log('📤 sendMessage API çağrısı yapılıyor...')
+      liveLog('info', 'Telegram API: messages.sendMessage çağrılıyor', `Hesap ${trunc(accountId, 16)} → ${trunc(cleanUsername, 48)}`)
       const sendResult = await client.sendMessage(entity, { message })
       console.log('📤 sendMessage API sonucu:', {
         accountId,
@@ -731,6 +750,7 @@ class TelegramManager {
       
       console.log('✅ Mesaj başarıyla gönderildi:', accountId, '->', username)
       console.log('📨 ========== sendMessage BAŞARILI ==========')
+      liveLog('ok', 'Telegram: mesaj iletildi', `${trunc(cleanUsername, 64)} · ${message.length} karakter`)
 
       return { success: true }
     } catch (error: any) {
@@ -866,6 +886,8 @@ class TelegramManager {
       } else if (errorCode === 400) {
         errorMessage = `Telegram API hatası (400): ${errorMsg || 'Bilinmeyen hata'}`
       }
+
+      liveLog('err', 'Telegram gönderim hatası', `${trunc(username, 48)} · ${trunc(errorMessage, 160)}`)
       
       return {
         success: false,
@@ -911,6 +933,7 @@ class TelegramManager {
 
   /**
    * Hesabın sohbet listesinden grup, süper grup ve kanalları döndürür (özel sohbetler hariç).
+   * Üye listesini API ile çekemeyeceğiniz yayın kanalları (yönetici/kurucu değilseniz) dahil edilmez.
    */
   async getJoinedGroups(
     accountId: string,
@@ -965,6 +988,7 @@ class TelegramManager {
 
         if (entity instanceof Api.Channel) {
           if (entity.left) continue
+          if (!channelEntityLikelyAllowsParticipantList(entity)) continue
           let typeLabel = 'Kanal'
           if (entity.megagroup) typeLabel = 'Süper grup'
           else if (entity.broadcast) typeLabel = 'Yayın kanalı'

@@ -8,10 +8,12 @@ import MessagesPage from '@/components/MessagesPage'
 import SchedulerPage from '@/components/SchedulerPage'
 import SettingsPage from '@/components/SettingsPage'
 import LogsPage from '@/components/LogsPage'
+import LiveWatchPage from '@/components/LiveWatchPage'
 import GroupsPage from '@/components/GroupsPage'
 import ToastStack from '@/components/ToastStack'
 import { useAppStore } from '@/store/appStore'
 import { telegramManager } from '@/lib/telegram'
+import { resumeActiveScheduledMessagesAfterLoad } from '@/lib/schedulerClient'
 
 export default function Home() {
   const currentPage = useAppStore((state) => state.currentPage)
@@ -37,6 +39,7 @@ export default function Home() {
         telegramManager.setApiConfig(acc.apiId, acc.apiHash)
       }
     }
+    void resumeActiveScheduledMessagesAfterLoad()
   }, [isLoaded])
 
   useEffect(() => {
@@ -233,6 +236,8 @@ export default function Home() {
         return <SchedulerPage />
       case 'logs':
         return <LogsPage />
+      case 'live':
+        return <LiveWatchPage />
       default:
         return <SettingsPage />
     }

@@ -34,6 +34,8 @@ export interface MessageTemplate {
   id: string
   content: string
   name: string
+  /** Açıksa: rastgele gecikmeler + her gönderimde metne hafif görünmez/boşluk varyasyonu (aynı metin imzasını kırar). */
+  antiSpamDelay?: boolean
 }
 
 export interface ScheduledMessage {
@@ -45,6 +47,8 @@ export interface ScheduledMessage {
   /** custom_list seçildiğinde orijinal metin (düzenleme ekranı için) */
   customListRaw?: string
   groupTarget?: JoinedGroupInfo
+  /** group_members: grupları ve üye listesini hangi hesabın oturumuyla çekeceğimiz (gönderim hesaplarından bağımsız). */
+  groupListAccountId?: string
   messageTemplateId: string
   scheduledTime: Date
   delayBetweenMessages: number // milliseconds
@@ -54,9 +58,24 @@ export interface ScheduledMessage {
   isActive: boolean
   sentCount: number
   totalCount: number
+  /** Başarılı gönderim çiftleri (hesapId::hedef); sayfa yenilemede kaldığı yerden devam için */
+  completedSendKeys?: string[]
+  /** Gönderim çalışırken başlatıldığı an (geçen süre için) */
+  runStartedAt?: Date
 }
 
-type Page = 'accounts' | 'groups' | 'messages' | 'scheduler' | 'settings' | 'logs'
+type Page = 'accounts' | 'groups' | 'messages' | 'scheduler' | 'settings' | 'logs' | 'live'
+
+/** Canlı konsol satırı (bellekte; sayfa yenilenince sıfırlanır) */
+export type LiveBotLogLevel = 'info' | 'ok' | 'warn' | 'err' | 'step'
+
+export interface LiveBotLogEntry {
+  id: string
+  ts: number
+  level: LiveBotLogLevel
+  message: string
+  detail?: string
+}
 
 export interface ErrorLog {
   id: string
@@ -99,6 +118,10 @@ interface AppState {
   toasts: AppToast[]
   apiConfig: TelegramApiConfig | null
   isLoaded: boolean
+  /** Bot canlı izle konsolu (anlık işlem günlüğü) */
+  liveBotLogs: LiveBotLogEntry[]
+  pushLiveBotLog: (entry: Omit<LiveBotLogEntry, 'id' | 'ts'>) => void
+  clearLiveBotLogs: () => void
   setCurrentPage: (page: Page) => void
   setApiConfig: (config: TelegramApiConfig) => void
   addAccount: (account: TelegramAccount) => void
@@ -126,7 +149,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   toasts: [],
   apiConfig: null,
   isLoaded: false,
-  
+  liveBotLogs: [],
+
+  pushLiveBotLog: (entry) => {
+    set((state) => {
+      const newLine: LiveBotLogEntry = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        ts: Date.now(),
+        ...entry,
+      }
+      return { liveBotLogs: [...state.liveBotLogs, newLine].slice(-3000) }
+    })
+  },
+
+  clearLiveBotLogs: () => set({ liveBotLogs: [] }),
+
   setCurrentPage: (page) => set({ currentPage: page }),
   
   setApiConfig: (config) => {
@@ -192,6 +229,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       saveScheduledMessages(newMessages.map((m) => ({
         ...m,
         scheduledTime: m.scheduledTime.toISOString(),
+        runStartedAt: m.runStartedAt?.toISOString(),
       })))
       return { scheduledMessages: newMessages }
     })
@@ -203,6 +241,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       saveScheduledMessages(newMessages.map((m) => ({
         ...m,
         scheduledTime: m.scheduledTime.toISOString(),
+        runStartedAt: m.runStartedAt?.toISOString(),
       })))
       return { scheduledMessages: newMessages }
     })
@@ -216,6 +255,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       saveScheduledMessages(newMessages.map((m) => ({
         ...m,
         scheduledTime: m.scheduledTime.toISOString(),
+        runStartedAt: m.runStartedAt?.toISOString(),
       })))
       return { scheduledMessages: newMessages }
     })

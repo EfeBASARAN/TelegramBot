@@ -26,6 +26,7 @@ export interface StoredMessageTemplate {
   id: string
   content: string
   name: string
+  antiSpamDelay?: boolean
 }
 
 export interface StoredScheduledMessage {
@@ -35,6 +36,7 @@ export interface StoredScheduledMessage {
   recipientMode?: 'manual' | 'group_members' | 'custom_list'
   customListRaw?: string
   groupTarget?: JoinedGroupInfo
+  groupListAccountId?: string
   messageTemplateId: string
   scheduledTime: string // ISO string
   delayBetweenMessages: number
@@ -43,6 +45,8 @@ export interface StoredScheduledMessage {
   isActive: boolean
   sentCount: number
   totalCount: number
+  completedSendKeys?: string[]
+  runStartedAt?: string
 }
 
 export interface StoredApiConfig {
@@ -124,7 +128,12 @@ export const saveScheduledMessages = (messages: StoredScheduledMessage[]): void 
   }
 }
 
-export const loadScheduledMessages = (): Array<Omit<StoredScheduledMessage, 'scheduledTime'> & { scheduledTime: Date }> => {
+export const loadScheduledMessages = (): Array<
+  Omit<StoredScheduledMessage, 'scheduledTime' | 'runStartedAt'> & {
+    scheduledTime: Date
+    runStartedAt?: Date
+  }
+> => {
   if (typeof window !== 'undefined') {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.SCHEDULED_MESSAGES)
@@ -132,16 +141,25 @@ export const loadScheduledMessages = (): Array<Omit<StoredScheduledMessage, 'sch
       
       const messages = JSON.parse(data)
       // Date string'lerini Date objelerine çevir - geçersiz tarihleri filtrele
-      type Row = Omit<StoredScheduledMessage, 'scheduledTime'> & { scheduledTime: Date }
+      type Row = Omit<StoredScheduledMessage, 'scheduledTime' | 'runStartedAt'> & {
+        scheduledTime: Date
+        runStartedAt?: Date
+      }
       return (messages as StoredScheduledMessage[])
         .map((msg: StoredScheduledMessage): Row | null => {
           const date = new Date(msg.scheduledTime)
           if (isNaN(date.getTime())) {
             return null
           }
+          let runStartedAt: Date | undefined
+          if (msg.runStartedAt) {
+            const rs = new Date(msg.runStartedAt)
+            if (!isNaN(rs.getTime())) runStartedAt = rs
+          }
           return {
             ...msg,
             scheduledTime: date,
+            runStartedAt,
           }
         })
         .filter((msg): msg is Row => msg !== null)

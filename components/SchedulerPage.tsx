@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Plus,
@@ -15,9 +15,13 @@ import {
   Users,
   CheckCircle2,
   AlertTriangle,
+  ChevronRight,
+  ChevronLeft,
 } from 'lucide-react'
 import { useAppStore, ScheduledMessage } from '@/store/appStore'
 import { messageScheduler } from '@/lib/scheduler'
+import { getSchedulerScheduleMessageArgs } from '@/lib/schedulerClient'
+import SchedulerRunProgress from '@/components/SchedulerRunProgress'
 import {
   telegramManager,
   memberToSendTarget,
@@ -26,6 +30,7 @@ import {
   validateCustomPeerListInput,
   type JoinedGroupInfo,
 } from '@/lib/telegram'
+import { TELEGRAM_PARTICIPANTS_ADMIN_NOTICE_TR } from '@/lib/telegramErrorMessages'
 
 /** Yerel saat için datetime-local input değeri (YYYY-MM-DDTHH:mm) */
 function toDatetimeLocalString(d: Date): string {
@@ -35,6 +40,21 @@ function toDatetimeLocalString(d: Date): string {
   const h = String(d.getHours()).padStart(2, '0')
   const min = String(d.getMinutes()).padStart(2, '0')
   return `${y}-${m}-${day}T${h}:${min}`
+}
+
+/** Üye sayısına göre azalan (yüksek üstte); bilinmeyenler sonda, eşitlikte başlık. */
+function sortGroupsByMemberCount(groups: JoinedGroupInfo[]): JoinedGroupInfo[] {
+  return [...groups].sort((a, b) => {
+    const ca = a.membersCount
+    const cb = b.membersCount
+    if (ca == null && cb == null) {
+      return a.title.localeCompare(b.title, 'tr', { sensitivity: 'base' })
+    }
+    if (ca == null) return 1
+    if (cb == null) return -1
+    if (cb !== ca) return cb - ca
+    return a.title.localeCompare(b.title, 'tr', { sensitivity: 'base' })
+  })
 }
 
 export default function SchedulerPage() {
@@ -67,19 +87,111 @@ export default function SchedulerPage() {
   const [selectedGroup, setSelectedGroup] = useState<JoinedGroupInfo | null>(null)
   const [loadingGroups, setLoadingGroups] = useState(false)
   const [groupsError, setGroupsError] = useState('')
+  /** Grup modunda: üye listesi / getJoinedGroups bu hesapla (gönderimdeki çoklu seçimden ayrı). */
+  const [groupListAccountId, setGroupListAccountId] = useState('')
 
   const customListValidation = useMemo(
     () => validateCustomPeerListInput(customListRaw),
     [customListRaw]
   )
 
+  const selectedTemplateAntiSpam = useMemo(
+    () => messageTemplates.find((t) => t.id === selectedTemplateId)?.antiSpamDelay === true,
+    [messageTemplates, selectedTemplateId]
+  )
+
   const connectedAccounts = accounts.filter((acc) => acc.isConnected)
-  const firstSelectedAccountId =
-    connectedAccounts.find((a) => selectedAccountIds.has(a.id))?.id ?? ''
-  const initializedRef = useRef(false)
+
+  /** Adım 3 özet önizlemesi (hesaplar, alıcılar, şablon, zaman) */
+  const schedulerPreview = useMemo(() => {
+    const accountLabels = connectedAccounts
+      .filter((a) => selectedAccountIds.has(a.id))
+      .map((a) => `${a.firstName || a.phoneNumber}${a.username ? ` (@${a.username})` : ''}`)
+
+    const distLabel =
+      accountDistribution === 'each_to_all'
+        ? 'Her hesap tüm alıcılara'
+        : 'Alıcıları hesaplara böl'
+
+    let recipientTitle = ''
+    let recipientExtra = ''
+    if (recipientMode === 'manual') {
+      const n = usernames
+        .split('\n')
+        .map((u) => u.trim())
+        .filter((u) => u.length > 0).length
+      recipientTitle = `Manuel liste · ${n} satır`
+    } else if (recipientMode === 'custom_list') {
+      const n = customListValidation.isValid ? customListValidation.recipientCount : null
+      recipientTitle =
+        n != null ? `Özel liste · ${n} alıcı` : 'Özel liste · formatı kontrol edin'
+    } else {
+      recipientTitle = 'Seçili grup üyeleri'
+      recipientExtra = selectedGroup
+        ? `${selectedGroup.title}${
+            selectedGroup.username
+              ? ` (@${selectedGroup.username.replace(/^@/, '')})`
+              : ''
+          }${
+            selectedGroup.membersCount != null
+              ? ` · ~${selectedGroup.membersCount.toLocaleString('tr-TR')} üye (yaklaşık)`
+              : ''
+          }`
+        : 'Grup seçilmedi'
+    }
+
+    const tmpl = messageTemplates.find((t) => t.id === selectedTemplateId)
+    const contentSnippet = tmpl
+      ? tmpl.content.length > 320
+        ? `${tmpl.content.slice(0, 320)}…`
+        : tmpl.content
+      : ''
+
+    let scheduledLabel = '—'
+    if (scheduledAt) {
+      const d = new Date(scheduledAt)
+      if (!Number.isNaN(d.getTime())) {
+        scheduledLabel = d.toLocaleString('tr-TR', { dateStyle: 'medium', timeStyle: 'short' })
+      }
+    }
+
+    return {
+      accountLabels,
+      distLabel,
+      recipientTitle,
+      recipientExtra,
+      templateName: tmpl?.name ?? '',
+      contentSnippet,
+      scheduledLabel,
+      delayMsgSec: delayBetweenMessages / 1000,
+      delayAccSec: delayBetweenAccounts / 1000,
+      antiSpam: selectedTemplateAntiSpam,
+    }
+  }, [
+    connectedAccounts,
+    selectedAccountIds,
+    accountDistribution,
+    recipientMode,
+    usernames,
+    customListValidation.isValid,
+    customListValidation.recipientCount,
+    selectedGroup,
+    messageTemplates,
+    selectedTemplateId,
+    scheduledAt,
+    delayBetweenMessages,
+    delayBetweenAccounts,
+    selectedTemplateAntiSpam,
+  ])
+
+  const firstConnectedAccountId = connectedAccounts[0]?.id
+  const groupListPickerValue = connectedAccounts.some((a) => a.id === groupListAccountId)
+    ? groupListAccountId
+    : ''
   const [timeRemaining, setTimeRemaining] = useState<Map<string, string>>(new Map())
   const [visiblePhones, setVisiblePhones] = useState<Set<string>>(new Set())
   const [modalPortalReady, setModalPortalReady] = useState(false)
+  const [modalStep, setModalStep] = useState<1 | 2 | 3>(1)
 
   useEffect(() => {
     setModalPortalReady(true)
@@ -91,14 +203,28 @@ export default function SchedulerPage() {
     }
   }, [])
 
+  /** Grup modunda liste hesabı yoksa veya artık bağlı değilse ilk bağlı hesabı kullan. */
   useEffect(() => {
     if (!showAddModal || recipientMode !== 'group_members') return
-    if (!firstSelectedAccountId) {
+    if (!firstConnectedAccountId) return
+    setGroupListAccountId((prev) => {
+      if (prev && connectedAccounts.some((a) => a.id === prev)) return prev
+      return firstConnectedAccountId
+    })
+  }, [showAddModal, recipientMode, firstConnectedAccountId, connectedAccounts])
+
+  useEffect(() => {
+    if (!showAddModal || recipientMode !== 'group_members') return
+    if (!groupListAccountId) {
       setGroupsForPicker([])
-      setGroupsError('')
+      setGroupsError(
+        connectedAccounts.length === 0
+          ? 'Grup listesi için önce bir hesabı bağlayın (Hesaplar sayfasından giriş).'
+          : ''
+      )
       return
     }
-    const account = accounts.find((a) => a.id === firstSelectedAccountId)
+    const account = accounts.find((a) => a.id === groupListAccountId)
     if (!account?.sessionString) {
       setGroupsForPicker([])
       setGroupsError('Seçili hesapta oturum yok')
@@ -120,8 +246,14 @@ export default function SchedulerPage() {
       .then((res) => {
         if (cancelled) return
         if (res.success && res.groups) {
-          setGroupsForPicker(res.groups)
+          const ordered = sortGroupsByMemberCount(res.groups)
+          setGroupsForPicker(ordered)
           setGroupsError('')
+          setSelectedGroup((prev) => {
+            if (!prev) return prev
+            const ok = ordered.some((g) => g.id === prev.id)
+            return ok ? prev : null
+          })
         } else {
           setGroupsForPicker([])
           setGroupsError(res.error || 'Gruplar yüklenemedi')
@@ -138,7 +270,14 @@ export default function SchedulerPage() {
     return () => {
       cancelled = true
     }
-  }, [showAddModal, recipientMode, firstSelectedAccountId, accounts, apiConfig])
+  }, [
+    showAddModal,
+    recipientMode,
+    groupListAccountId,
+    accounts,
+    apiConfig,
+    connectedAccounts.length,
+  ])
 
   // Kalan süreyi hesapla ve güncelle (tüm mesajlar için)
   useEffect(() => {
@@ -207,85 +346,6 @@ export default function SchedulerPage() {
     return () => clearInterval(interval)
   }, [scheduledMessages])
 
-  // Sayfa yüklendiğinde aktif mesajları kontrol et ve başlat
-  useEffect(() => {
-    // Sadece ilk yüklemede ve veriler hazır olduğunda çalış
-    if (initializedRef.current) return
-    if (scheduledMessages.length === 0 || messageTemplates.length === 0) return
-    
-    initializedRef.current = true
-    
-    console.log('🔄 Aktif mesajlar başlatılıyor...', {
-      scheduledMessagesCount: scheduledMessages.length,
-      messageTemplatesCount: messageTemplates.length
-    })
-    
-    const initializeActiveMessages = async () => {
-      for (const scheduledMessage of scheduledMessages) {
-        console.log('🔍 Mesaj kontrol ediliyor:', {
-          id: scheduledMessage.id,
-          isActive: scheduledMessage.isActive,
-          scheduledTime: new Date(scheduledMessage.scheduledTime).toISOString()
-        })
-        
-        if (scheduledMessage.isActive) {
-          const template = messageTemplates.find(
-            (t) => t.id === scheduledMessage.messageTemplateId
-          )
-          if (!template) {
-            console.warn('⚠️ Şablon bulunamadı, mesaj pasif yapılıyor:', scheduledMessage.id)
-            updateScheduledMessage(scheduledMessage.id, { isActive: false })
-            continue
-          }
-
-          // Mesaj zaten zamanlanmış mı kontrol et
-          if (messageScheduler.isMessageActive(scheduledMessage.id)) {
-            console.log('⏭️ Mesaj zaten zamanlanmış, atlanıyor:', scheduledMessage.id)
-            continue // Zaten zamanlanmış, tekrar zamanlama
-          }
-
-          console.log('⏰ Mesaj zamanlanıyor:', scheduledMessage.id)
-          
-          // Zamanlayıcıya ekle (zamanı geçmişse delay 0 olacak ve hemen gönderilecek)
-          await messageScheduler.scheduleMessage(
-            scheduledMessage,
-            (id) => messageTemplates.find((t) => t.id === id),
-            (id, sent, total, done) => {
-              console.log('📊 İlerleme güncellendi:', { id, sent, total, done })
-              /** done veya tümü gönderildi: store'daki isActive kapatılır (closure'daki eski scheduledMessages güvenilmez) */
-              if (done === true || (sent >= total && total > 0)) {
-                updateScheduledMessage(id, { sentCount: sent, totalCount: total, isActive: false })
-              } else {
-                updateScheduledMessage(id, { sentCount: sent, totalCount: total })
-              }
-            },
-            (accountId) => {
-              const account = accounts.find((a) => a.id === accountId)
-              return account ? { 
-                sessionString: account.sessionString, 
-                phoneNumber: account.phoneNumber,
-                apiId: account.apiId,
-                apiHash: account.apiHash
-              } : undefined
-            },
-            (log) => {
-              addErrorLog({ ...log })
-            },
-            (err, messageId) => {
-              const msg = err instanceof Error ? err.message : String(err)
-              pushToast(msg, 'error')
-              updateScheduledMessage(messageId, { isActive: false })
-            }
-          )
-        }
-      }
-      
-      console.log('✅ Aktif mesajlar başlatma tamamlandı')
-    }
-
-    initializeActiveMessages()
-  }, [scheduledMessages, messageTemplates, accounts, updateScheduledMessage, addErrorLog, pushToast])
-
   const handleAdd = async () => {
     if (!selectedTemplateId || !scheduledAt) {
       pushToast('Şablon ve gönderim tarihi/saati alanlarını doldurun', 'info')
@@ -317,6 +377,17 @@ export default function SchedulerPage() {
         'info'
       )
       return
+    }
+
+    if (recipientMode === 'group_members') {
+      if (!groupListAccountId) {
+        pushToast('Grup listesi için bir hesap seçin', 'info')
+        return
+      }
+      if (!connectedAccounts.some((a) => a.id === groupListAccountId)) {
+        pushToast('Grup listesi hesabı bağlı değil veya geçersiz', 'info')
+        return
+      }
     }
 
     if (recipientMode === 'group_members' && !selectedGroup) {
@@ -362,17 +433,17 @@ export default function SchedulerPage() {
       mode = 'custom_list'
       savedCustomRaw = customListRaw.trim()
     } else {
-      const firstAccount = accounts.find((a) => a.id === accountIds[0])
-      if (!firstAccount?.sessionString) {
-        pushToast('Grup üyelerini kullanmak için seçili hesabın oturumu açık olmalı', 'error')
+      const listAccount = accounts.find((a) => a.id === groupListAccountId)
+      if (!listAccount?.sessionString) {
+        pushToast('Grup listesi hesabının oturumu açık olmalı', 'error')
         return
       }
-      const apiId = firstAccount.apiId || apiConfig?.apiId
-      const apiHash = firstAccount.apiHash || apiConfig?.apiHash
+      const apiId = listAccount.apiId || apiConfig?.apiId
+      const apiHash = listAccount.apiHash || apiConfig?.apiHash
       const res = await telegramManager.getGroupParticipants(
-        firstAccount.id,
-        firstAccount.sessionString,
-        firstAccount.phoneNumber,
+        listAccount.id,
+        listAccount.sessionString,
+        listAccount.phoneNumber,
         apiId,
         apiHash,
         selectedGroup!
@@ -407,6 +478,7 @@ export default function SchedulerPage() {
           usernames: usernameList,
           recipientMode: mode,
           groupTarget: mode === 'group_members' ? groupTarget : undefined,
+          groupListAccountId: mode === 'group_members' ? groupListAccountId : undefined,
           customListRaw: mode === 'custom_list' ? savedCustomRaw : undefined,
           messageTemplateId: selectedTemplateId,
           scheduledTime: scheduledDateTime,
@@ -424,6 +496,7 @@ export default function SchedulerPage() {
         usernames: usernameList,
         recipientMode: mode,
         groupTarget: mode === 'group_members' ? groupTarget : undefined,
+        groupListAccountId: mode === 'group_members' ? groupListAccountId : undefined,
         customListRaw: mode === 'custom_list' ? savedCustomRaw : undefined,
         messageTemplateId: selectedTemplateId,
         scheduledTime: scheduledDateTime,
@@ -456,6 +529,66 @@ export default function SchedulerPage() {
     setScheduledAt(toDatetimeLocalString(new Date()))
     setDelayBetweenMessages(3000)
     setDelayBetweenAccounts(5000)
+    setGroupListAccountId('')
+    setModalStep(1)
+  }
+
+  const validateSchedulerStep1 = (): boolean => {
+    const accountIds = connectedAccounts
+      .filter((a) => selectedAccountIds.has(a.id))
+      .map((a) => a.id)
+    if (accountIds.length === 0) {
+      pushToast('En az bir bağlı hesap seçin', 'info')
+      return false
+    }
+    return true
+  }
+
+  const validateSchedulerStep2 = (): boolean => {
+    if (recipientMode === 'manual') {
+      const lines = usernames
+        .split('\n')
+        .map((u) => u.trim())
+        .filter((u) => u.length > 0)
+      if (lines.length === 0) {
+        pushToast('Alıcı listesini doldurun', 'info')
+        return false
+      }
+    } else if (recipientMode === 'custom_list') {
+      if (!customListRaw.trim()) {
+        pushToast(
+          'Özel listeyi yapıştırın (satır başına: kullanıcı ID | access hash veya kullanıcı | ID | access hash)',
+          'info'
+        )
+        return false
+      }
+      if (!customListValidation.isValid) {
+        pushToast('Özel liste satırlarını düzeltin', 'error')
+        return false
+      }
+    } else if (recipientMode === 'group_members') {
+      if (!groupListAccountId || !connectedAccounts.some((a) => a.id === groupListAccountId)) {
+        pushToast('Grup listesi için bir hesap seçin', 'info')
+        return false
+      }
+      if (loadingGroups) {
+        pushToast('Gruplar yükleniyor, birkaç saniye bekleyin', 'info')
+        return false
+      }
+      if (groupsError) {
+        pushToast('Grup listesi yüklenemedi; hata mesajını kontrol edin', 'error')
+        return false
+      }
+      if (!selectedGroup) {
+        pushToast('Bir grup seçin', 'info')
+        return false
+      }
+    }
+    return true
+  }
+
+  const goSchedulerBack = () => {
+    setModalStep(modalStep === 3 ? 2 : 1)
   }
 
   const handleEdit = (scheduledMessage: ScheduledMessage) => {
@@ -472,6 +605,9 @@ export default function SchedulerPage() {
     setEditingMessageId(scheduledMessage.id)
     setSelectedAccountIds(new Set(scheduledMessage.accountIds ?? []))
     setAccountDistribution(scheduledMessage.accountDistribution ?? 'each_to_all')
+    setGroupListAccountId(
+      scheduledMessage.groupListAccountId ?? scheduledMessage.accountIds[0] ?? ''
+    )
     const rm = scheduledMessage.recipientMode ?? 'manual'
     setRecipientMode(rm)
     setSelectedGroup(scheduledMessage.groupTarget ?? null)
@@ -490,7 +626,8 @@ export default function SchedulerPage() {
     setScheduledAt(toDatetimeLocalString(new Date(scheduledMessage.scheduledTime)))
     setDelayBetweenMessages(scheduledMessage.delayBetweenMessages)
     setDelayBetweenAccounts(scheduledMessage.delayBetweenAccounts)
-    
+
+    setModalStep(1)
     setShowAddModal(true)
   }
 
@@ -514,37 +651,25 @@ export default function SchedulerPage() {
       usernames: scheduledMessage.usernames
     })
 
-    updateScheduledMessage(scheduledMessage.id, { isActive: true })
+    updateScheduledMessage(scheduledMessage.id, {
+      isActive: true,
+      completedSendKeys: [],
+      sentCount: 0,
+      runStartedAt: new Date(),
+    })
     console.log('✅ Mesaj aktif yapıldı:', scheduledMessage.id)
 
+    const fresh = useAppStore.getState().scheduledMessages.find((x) => x.id === scheduledMessage.id)
+    if (!fresh) return
+
+    const schedArgs = getSchedulerScheduleMessageArgs()
     await messageScheduler.scheduleMessage(
-      scheduledMessage,
-      (id) => messageTemplates.find((t) => t.id === id),
-      (id, sent, total, done) => {
-        console.log('📊 İlerleme güncellendi:', { id, sent, total, done })
-        if (done === true || (sent >= total && total > 0)) {
-          updateScheduledMessage(id, { sentCount: sent, totalCount: total, isActive: false })
-        } else {
-          updateScheduledMessage(id, { sentCount: sent, totalCount: total })
-        }
-      },
-      (accountId) => {
-        const account = accounts.find((a) => a.id === accountId)
-        return account ? { 
-          sessionString: account.sessionString, 
-          phoneNumber: account.phoneNumber,
-          apiId: account.apiId,
-          apiHash: account.apiHash
-        } : undefined
-      },
-      (log) => {
-        addErrorLog({ ...log })
-      },
-      (err, messageId) => {
-        const msg = err instanceof Error ? err.message : String(err)
-        pushToast(msg, 'error')
-        updateScheduledMessage(messageId, { isActive: false })
-      }
+      fresh,
+      schedArgs.getMessageTemplate,
+      schedArgs.onProgress,
+      schedArgs.getAccountInfo,
+      schedArgs.addErrorLog,
+      schedArgs.onExecutionError
     )
     
     console.log('✅ Mesaj zamanlandı:', scheduledMessage.id)
@@ -552,7 +677,7 @@ export default function SchedulerPage() {
 
   const handleStop = (id: string) => {
     messageScheduler.cancelMessage(id)
-    updateScheduledMessage(id, { isActive: false })
+    updateScheduledMessage(id, { isActive: false, runStartedAt: undefined })
   }
 
   const handleDelete = (id: string) => {
@@ -750,20 +875,6 @@ export default function SchedulerPage() {
                             : 'Her hesap tümü'}
                         </span>
                       </div>
-                      {scheduledMessage.isActive && (
-                        <>
-                          <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/10">
-                            <span className="text-green-400 font-semibold text-xs">İlerleme:</span>
-                            <span className="text-green-400 font-bold text-xs">{scheduledMessage.sentCount} / {scheduledMessage.totalCount}</span>
-                          </div>
-                          {timeRemaining.get(scheduledMessage.id) && (
-                            <div className="flex items-center gap-2">
-                              <span className="text-blue-400 font-semibold text-xs">Durum:</span>
-                              <span className="text-blue-400 font-bold text-xs">{timeRemaining.get(scheduledMessage.id)}</span>
-                            </div>
-                          )}
-                        </>
-                      )}
                       {!scheduledMessage.isActive && timeRemaining.get(scheduledMessage.id) && (
                         <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/10">
                           <span className="text-yellow-400 font-semibold text-xs">Durum:</span>
@@ -806,6 +917,14 @@ export default function SchedulerPage() {
                       <Trash2 size={14} />
                     </button>
                   </div>
+                  {scheduledMessage.isActive && (
+                    <SchedulerRunProgress
+                      sentCount={scheduledMessage.sentCount}
+                      totalCount={scheduledMessage.totalCount}
+                      runStartedAt={scheduledMessage.runStartedAt}
+                      statusLine={timeRemaining.get(scheduledMessage.id)}
+                    />
+                  )}
                 </div>
               </div>
             )
@@ -831,15 +950,40 @@ export default function SchedulerPage() {
               <div className="absolute bottom-0 left-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -ml-32 -mb-32" />
             </div>
 
-            <h3
-              id="scheduler-modal-title"
-              className="text-xl font-bold text-white px-6 pt-6 pb-3 tracking-tight relative z-20 shrink-0 rounded-t-2xl border-b border-white/[0.08] bg-[rgba(10,10,12,0.98)] backdrop-blur-md"
-            >
-              {editingMessageId ? 'Zamanlamayı Düzenle' : 'Yeni Zamanlama'}
-            </h3>
+            <div className="shrink-0 rounded-t-2xl border-b border-white/[0.08] bg-[rgba(10,10,12,0.98)] backdrop-blur-md px-6 pt-6 pb-3 relative z-20">
+              <h3
+                id="scheduler-modal-title"
+                className="text-xl font-bold text-white tracking-tight"
+              >
+                {editingMessageId ? 'Zamanlamayı Düzenle' : 'Yeni Zamanlama'}
+              </h3>
+              <div
+                className="flex flex-wrap items-center gap-x-2 gap-y-1 sm:gap-3 mt-3 text-[11px] sm:text-xs font-semibold"
+                role="navigation"
+                aria-label="Adımlar"
+              >
+                <span className={modalStep === 1 ? 'text-emerald-400' : 'text-white/40'}>
+                  1 · Hesaplar
+                </span>
+                <span className="text-white/25" aria-hidden>
+                  →
+                </span>
+                <span className={modalStep === 2 ? 'text-emerald-400' : 'text-white/40'}>
+                  2 · Alıcılar
+                </span>
+                <span className="text-white/25" aria-hidden>
+                  →
+                </span>
+                <span className={modalStep === 3 ? 'text-emerald-400' : 'text-white/40'}>
+                  3 · Şablon ve zaman
+                </span>
+              </div>
+            </div>
 
             <div className="relative z-10 flex-1 min-h-0 overflow-y-auto overscroll-contain px-6 py-4">
             <div className="space-y-4">
+              {modalStep === 1 && (
+              <>
               <div>
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                   <span className="text-sm font-bold text-white tracking-tight">Hesaplar</span>
@@ -929,7 +1073,11 @@ export default function SchedulerPage() {
                   </label>
                 </div>
               </div>
+              </>
+              )}
 
+              {modalStep === 2 && (
+              <>
               <div>
                 <span className="block text-sm font-bold text-white mb-2 tracking-tight">
                   Alıcılar
@@ -954,7 +1102,7 @@ export default function SchedulerPage() {
                       className="accent-white"
                     />
                     <span className="text-white text-sm">
-                      Seçili gruptaki tüm üyelere (hesabın gruplarından seçin)
+                      Seçili gruptaki tüm üyelere (grup listesi ayrı hesaptan seçilir)
                     </span>
                   </label>
                   <label className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-white/5 border border-white/5">
@@ -1047,15 +1195,50 @@ export default function SchedulerPage() {
                     </p>
                   </>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     <p className="text-xs text-white/50">
                       Gönderim, plan çalıştığında gruptan güncel üye listesi ile yapılır. Botlar atlanır.
                     </p>
-                    {!firstSelectedAccountId && (
-                      <p className="text-xs text-amber-400/90">Önce yukarıdan en az bir hesap seçin.</p>
-                    )}
+                    <p className="text-xs text-white/45 leading-relaxed">
+                      Aşağıdaki grup listesi, üye çekilebilecek sohbetlerle sınırlıdır; yönetici olmadığınız
+                      yayın kanalları burada listelenmez.
+                    </p>
+                    <p className="text-xs text-amber-100/85 leading-relaxed rounded-lg border border-amber-500/25 bg-amber-500/[0.08] px-3 py-2.5">
+                      {TELEGRAM_PARTICIPANTS_ADMIN_NOTICE_TR}
+                    </p>
+                    <div>
+                      <label
+                        htmlFor="scheduler-group-list-account"
+                        className="block text-xs font-semibold text-white/70 mb-1.5"
+                      >
+                        Grup listesi ve üye çekme hesabı
+                      </label>
+                      <p className="text-xs text-white/40 mb-2 leading-relaxed">
+                        Bu hesap, hangi Telegram oturumundan grupların listeleneceğini ve üyelerin
+                        okunacağını belirler. Yukarıdaki &quot;Hesaplar&quot; kutusu ise mesajı hangi
+                        hesapların göndereceğini seçer; ikisi farklı olabilir.
+                      </p>
+                      <select
+                        id="scheduler-group-list-account"
+                        value={groupListPickerValue}
+                        onChange={(e) => {
+                          const v = e.target.value
+                          setGroupListAccountId(v)
+                          setSelectedGroup(null)
+                        }}
+                        className="input-focus w-full px-3 py-2.5 rounded-xl text-white focus:outline-none text-sm"
+                      >
+                        <option value="">— Grup listesi için hesap seçin —</option>
+                        {connectedAccounts.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.firstName || a.phoneNumber}
+                            {a.username ? ` (@${a.username})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                     {loadingGroups && (
-                      <div className="flex items-center gap-2 text-white/60 text-sm py-2">
+                      <div className="flex items-center gap-2 text-white/60 text-sm py-1">
                         <Loader2 className="w-4 h-4 animate-spin" />
                         Gruplar yükleniyor…
                       </div>
@@ -1063,28 +1246,57 @@ export default function SchedulerPage() {
                     {groupsError && (
                       <p className="text-xs text-red-400">{groupsError}</p>
                     )}
-                    {!loadingGroups && recipientMode === 'group_members' && firstSelectedAccountId && (
-                      <select
-                        value={selectedGroup?.id ?? ''}
-                        onChange={(e) => {
-                          const g = groupsForPicker.find((x) => x.id === e.target.value)
-                          setSelectedGroup(g ?? null)
-                        }}
-                        className="input-focus w-full px-3 py-2.5 rounded-xl text-white focus:outline-none text-sm"
-                      >
-                        <option value="">Grup seçin…</option>
-                        {groupsForPicker.map((g) => (
-                          <option key={g.id} value={g.id}>
-                            {g.title}
-                            {g.username ? ` (@${g.username.replace(/^@/, '')})` : ''}
+                    {!loadingGroups &&
+                      recipientMode === 'group_members' &&
+                      groupListPickerValue &&
+                      !groupsError &&
+                      groupsForPicker.length === 0 && (
+                        <p className="text-xs text-amber-400/90">
+                          Bu hesap için listelenecek uygun grup/kanal yok (üye listesi çekilebilecek klasik
+                          grup/süper grup veya yönetici olduğunuz yayın kanalı). Abone olduğunuz
+                          yönetici olmadığınız kanallar gösterilmez.
+                        </p>
+                      )}
+                    {!loadingGroups && recipientMode === 'group_members' && groupListPickerValue && (
+                      <div>
+                        <label
+                          htmlFor="scheduler-pick-group"
+                          className="block text-xs font-semibold text-white/70 mb-1.5"
+                        >
+                          Grup
+                        </label>
+                        <select
+                          id="scheduler-pick-group"
+                          value={selectedGroup?.id ?? ''}
+                          onChange={(e) => {
+                            const g = groupsForPicker.find((x) => x.id === e.target.value)
+                            setSelectedGroup(g ?? null)
+                          }}
+                          className="input-focus w-full px-3 py-2.5 rounded-xl text-white focus:outline-none text-sm"
+                        >
+                          <option value="">
+                            {groupsForPicker.length === 0 ? 'Önce yukarıdan grup listesi hesabını seçin' : 'Grup seçin…'}
                           </option>
-                        ))}
-                      </select>
+                          {groupsForPicker.map((g) => (
+                            <option key={g.id} value={g.id}>
+                              {g.title}
+                              {g.username ? ` (@${g.username.replace(/^@/, '')})` : ''}
+                              {g.membersCount != null
+                                ? ` — ${g.membersCount.toLocaleString('tr-TR')} üye`
+                                : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     )}
                   </div>
                 )}
               </div>
+              </>
+              )}
 
+              {modalStep === 3 && (
+              <>
               <div>
                 <label className="block text-sm font-bold text-white mb-2 tracking-tight">
                   Mesaj Şablonu
@@ -1119,10 +1331,20 @@ export default function SchedulerPage() {
                 />
               </div>
 
+              {selectedTemplateAntiSpam && (
+                <p className="text-xs text-emerald-400/90 leading-relaxed -mt-1 mb-1">
+                  Anti-spam açık: aşağıdaki saniyeler <span className="text-emerald-300/95 font-semibold">sabit bekleme değildir</span>
+                  — rastgele aralığın <span className="text-emerald-300/95 font-semibold">taban (referans)</span> değeridir. Metin de her
+                  gönderimde hafifçe çeşitlenir.
+                </p>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-bold text-white mb-2 tracking-tight">
-                    Mesajlar Arası Gecikme (saniye)
+                    {selectedTemplateAntiSpam
+                      ? 'Mesajlar arası taban süre (sn)'
+                      : 'Mesajlar Arası Gecikme (saniye)'}
                   </label>
                   <input
                     type="number"
@@ -1134,12 +1356,16 @@ export default function SchedulerPage() {
                     className="input-focus w-full px-3 py-2.5 rounded-xl text-white focus:outline-none text-sm"
                   />
                   <p className="text-xs text-white/40 mt-1 font-medium">
-                    Önerilen: 3-5 saniye
+                    {selectedTemplateAntiSpam
+                      ? 'Gerçek bekleme bu sürenin etrafında her seferinde rastgele seçilir.'
+                      : 'Önerilen: 3-5 saniye'}
                   </p>
                 </div>
                 <div>
                   <label className="block text-sm font-bold text-white mb-2 tracking-tight">
-                    Hesaplar Arası Gecikme (saniye)
+                    {selectedTemplateAntiSpam
+                      ? 'Hesaplar arası taban süre (sn)'
+                      : 'Hesaplar Arası Gecikme (saniye)'}
                   </label>
                   <input
                     type="number"
@@ -1151,27 +1377,132 @@ export default function SchedulerPage() {
                     className="input-focus w-full px-3 py-2.5 rounded-xl text-white focus:outline-none text-sm"
                   />
                   <p className="text-xs text-white/40 mt-1 font-medium">
-                    Önerilen: 5-10 saniye
+                    {selectedTemplateAntiSpam
+                      ? 'Çoklu hesapta geçişlerde de aynı şekilde rastgele aralık kullanılır.'
+                      : 'Önerilen: 5-10 saniye'}
                   </p>
                 </div>
               </div>
+
+              <div className="rounded-xl border border-white/10 bg-black/25 overflow-hidden">
+                <div className="flex items-center gap-2 px-3 py-2.5 border-b border-white/[0.08] bg-white/[0.04]">
+                  <Eye size={16} className="text-emerald-400/90 shrink-0" aria-hidden />
+                  <span className="text-xs font-bold text-white/90 tracking-tight">Önizleme</span>
+                </div>
+                <div className="px-3 py-3 space-y-3 text-xs text-white/80">
+                  <div>
+                    <span className="font-semibold text-white/55 block mb-1">Hesaplar</span>
+                    {schedulerPreview.accountLabels.length > 0 ? (
+                      <ul className="list-disc pl-4 space-y-0.5 text-white/85">
+                        {schedulerPreview.accountLabels.map((label, i) => (
+                          <li key={i} className="break-words">
+                            {label}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-amber-400/90">Henüz hesap seçilmedi</p>
+                    )}
+                    <p className="text-white/50 mt-1.5">{schedulerPreview.distLabel}</p>
+                  </div>
+                  <div>
+                    <span className="font-semibold text-white/55 block mb-1">Alıcılar</span>
+                    <p>{schedulerPreview.recipientTitle}</p>
+                    {schedulerPreview.recipientExtra ? (
+                      <p className="text-white/60 mt-1 break-words">{schedulerPreview.recipientExtra}</p>
+                    ) : null}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-white/55 block mb-1">Şablon</span>
+                    {schedulerPreview.templateName ? (
+                      <>
+                        <p className="font-medium text-white/90">{schedulerPreview.templateName}</p>
+                        {schedulerPreview.contentSnippet ? (
+                          <pre className="mt-2 max-h-32 overflow-y-auto rounded-lg border border-white/[0.07] bg-black/30 px-2.5 py-2 text-[11px] leading-relaxed text-white/75 whitespace-pre-wrap break-words font-sans">
+                            {schedulerPreview.contentSnippet}
+                          </pre>
+                        ) : null}
+                      </>
+                    ) : (
+                      <p className="text-amber-400/90">Şablon seçilmedi</p>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-white/[0.06]">
+                    <div>
+                      <span className="font-semibold text-white/55 block mb-0.5">Gönderim zamanı</span>
+                      <p className="text-white/90">{schedulerPreview.scheduledLabel}</p>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-white/55 block mb-0.5">Gecikmeler (sn)</span>
+                      <p className="text-white/90">
+                        Mesajlar: {schedulerPreview.delayMsgSec} · Hesaplar: {schedulerPreview.delayAccSec}
+                      </p>
+                      {schedulerPreview.antiSpam ? (
+                        <p className="text-emerald-400/85 text-[10px] mt-1 leading-snug">
+                          Anti-spam: süreler taban; gerçek bekleme rastgele.
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              </>
+              )}
             </div>
             </div>
 
-            <div className="shrink-0 relative z-20 flex gap-3 px-6 py-4 border-t border-white/[0.08] bg-[rgba(10,10,12,0.98)] backdrop-blur-md rounded-b-2xl">
+            <div className="shrink-0 relative z-20 flex flex-wrap gap-2 sm:gap-3 px-6 py-4 border-t border-white/[0.08] bg-[rgba(10,10,12,0.98)] backdrop-blur-md rounded-b-2xl">
+              {modalStep > 1 && (
+                <button
+                  type="button"
+                  onClick={goSchedulerBack}
+                  className="px-4 py-3 bg-white/10 hover:bg-white/15 text-white rounded-xl font-bold border border-white/10 hover:border-white/20 transition-all flex items-center justify-center gap-1.5 shrink-0"
+                >
+                  <ChevronLeft size={18} aria-hidden />
+                  Geri
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
                   setShowAddModal(false)
                   resetForm()
                 }}
-                className="flex-1 px-4 py-3 bg-white/10 hover:bg-white/15 text-white rounded-xl font-bold border border-white/10 hover:border-white/20 transition-all"
+                className="flex-1 min-w-[6rem] px-4 py-3 bg-white/10 hover:bg-white/15 text-white rounded-xl font-bold border border-white/10 hover:border-white/20 transition-all"
               >
                 İptal
               </button>
-              <button type="button" onClick={handleAdd} className="btn-primary flex-1 px-4 py-3 rounded-xl font-bold">
-                {editingMessageId ? 'Kaydet' : 'Ekle'}
-              </button>
+              {modalStep === 1 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (validateSchedulerStep1()) setModalStep(2)
+                  }}
+                  className="btn-primary flex-1 min-w-[8rem] px-4 py-3 rounded-xl font-bold flex items-center justify-center gap-1.5"
+                >
+                  İleri
+                  <ChevronRight size={18} aria-hidden />
+                </button>
+              ) : modalStep === 2 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (validateSchedulerStep2()) setModalStep(3)
+                  }}
+                  className="btn-primary flex-1 min-w-[8rem] px-4 py-3 rounded-xl font-bold flex items-center justify-center gap-1.5"
+                >
+                  İleri
+                  <ChevronRight size={18} aria-hidden />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleAdd}
+                  className="btn-primary flex-1 min-w-[8rem] px-4 py-3 rounded-xl font-bold"
+                >
+                  {editingMessageId ? 'Güncellemeyi onayla' : 'Onayla'}
+                </button>
+              )}
             </div>
           </div>
         </div>,
