@@ -62,6 +62,8 @@ export interface ScheduledMessage {
   completedSendKeys?: string[]
   /** Gönderim çalışırken başlatıldığı an (geçen süre için) */
   runStartedAt?: Date
+  /** Varsa: bu zamana kadar her tur bittiğinde yeni tur başlar (tek tur: boş bırakın) */
+  repeatUntil?: Date
 }
 
 type Page = 'accounts' | 'groups' | 'messages' | 'scheduler' | 'settings' | 'logs' | 'live'
@@ -132,7 +134,12 @@ interface AppState {
   updateMessageTemplate: (id: string, updates: Partial<MessageTemplate>) => void
   addScheduledMessage: (message: ScheduledMessage) => void
   removeScheduledMessage: (id: string) => void
-  updateScheduledMessage: (id: string, updates: Partial<ScheduledMessage>) => void
+  updateScheduledMessage: (
+    id: string,
+    updates:
+      | Partial<ScheduledMessage>
+      | ((prev: ScheduledMessage) => Partial<ScheduledMessage>)
+  ) => void
   addErrorLog: (log: Omit<ErrorLog, 'id'>) => void
   clearErrorLogs: () => void
   loadFromStorage: () => void
@@ -230,6 +237,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...m,
         scheduledTime: m.scheduledTime.toISOString(),
         runStartedAt: m.runStartedAt?.toISOString(),
+        repeatUntil: m.repeatUntil?.toISOString(),
       })))
       return { scheduledMessages: newMessages }
     })
@@ -242,6 +250,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...m,
         scheduledTime: m.scheduledTime.toISOString(),
         runStartedAt: m.runStartedAt?.toISOString(),
+        repeatUntil: m.repeatUntil?.toISOString(),
       })))
       return { scheduledMessages: newMessages }
     })
@@ -249,13 +258,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   
   updateScheduledMessage: (id, updates) => {
     set((state) => {
-      const newMessages = state.scheduledMessages.map((m) =>
-        m.id === id ? { ...m, ...updates } : m
-      )
+      const newMessages = state.scheduledMessages.map((m) => {
+        if (m.id !== id) return m
+        const patch = typeof updates === 'function' ? updates(m) : updates
+        return { ...m, ...patch }
+      })
       saveScheduledMessages(newMessages.map((m) => ({
         ...m,
         scheduledTime: m.scheduledTime.toISOString(),
         runStartedAt: m.runStartedAt?.toISOString(),
+        repeatUntil: m.repeatUntil?.toISOString(),
       })))
       return { scheduledMessages: newMessages }
     })

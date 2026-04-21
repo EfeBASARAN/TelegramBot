@@ -47,6 +47,7 @@ export interface StoredScheduledMessage {
   totalCount: number
   completedSendKeys?: string[]
   runStartedAt?: string
+  repeatUntil?: string
 }
 
 export interface StoredApiConfig {
@@ -129,9 +130,10 @@ export const saveScheduledMessages = (messages: StoredScheduledMessage[]): void 
 }
 
 export const loadScheduledMessages = (): Array<
-  Omit<StoredScheduledMessage, 'scheduledTime' | 'runStartedAt'> & {
+  Omit<StoredScheduledMessage, 'scheduledTime' | 'runStartedAt' | 'repeatUntil'> & {
     scheduledTime: Date
     runStartedAt?: Date
+    repeatUntil?: Date
   }
 > => {
   if (typeof window !== 'undefined') {
@@ -141,9 +143,10 @@ export const loadScheduledMessages = (): Array<
       
       const messages = JSON.parse(data)
       // Date string'lerini Date objelerine çevir - geçersiz tarihleri filtrele
-      type Row = Omit<StoredScheduledMessage, 'scheduledTime' | 'runStartedAt'> & {
+      type Row = Omit<StoredScheduledMessage, 'scheduledTime' | 'runStartedAt' | 'repeatUntil'> & {
         scheduledTime: Date
         runStartedAt?: Date
+        repeatUntil?: Date
       }
       return (messages as StoredScheduledMessage[])
         .map((msg: StoredScheduledMessage): Row | null => {
@@ -156,10 +159,16 @@ export const loadScheduledMessages = (): Array<
             const rs = new Date(msg.runStartedAt)
             if (!isNaN(rs.getTime())) runStartedAt = rs
           }
+          let repeatUntil: Date | undefined
+          if (msg.repeatUntil) {
+            const ru = new Date(msg.repeatUntil)
+            if (!isNaN(ru.getTime())) repeatUntil = ru
+          }
           return {
             ...msg,
             scheduledTime: date,
             runStartedAt,
+            repeatUntil,
           }
         })
         .filter((msg): msg is Row => msg !== null)

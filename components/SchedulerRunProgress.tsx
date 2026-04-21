@@ -66,8 +66,11 @@ export default function SchedulerRunProgress({ sentCount, totalCount, runStarted
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px]">
-        <span className="text-white/70 font-medium">
-          İlerleme:{' '}
+        <span
+          className="text-white/70 font-medium"
+          title="Başarıyla iletilen mesaj sayısı / bu turdaki toplam gönderim adımı. Canlı logda her hesap satırı görünür; boş alıcısı olan hesaplar veya hata alanlar başarı sayılmaz."
+        >
+          Başarılı:{' '}
           <span className="text-emerald-300/95 font-bold tabular-nums">
             {sentCount} / {totalCount}
           </span>

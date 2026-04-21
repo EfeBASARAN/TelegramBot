@@ -21,7 +21,18 @@ function randomAntiSpamTailMs(): number {
 
 type SchedulerTemplate = { content: string; name?: string; antiSpamDelay?: boolean }
 
-export type SchedulerOnProgressMeta = { completedKey?: string }
+export type SchedulerOnProgressMeta = {
+  completedKey?: string
+  /** Bitiş zamanı doldu; çoklu tur modunda gönderim başlamadan kapat */
+  repeatWindowEnded?: boolean
+  /** Kullanıcı durdurdu; çoklu tur tekrarlanmaz */
+  userStopped?: boolean
+  /**
+   * false: bağlantı vb. yüzünden tüm alıcı sırası tamamlanmadı — çoklu tur (repeatUntil) tekrarlanmamalı,
+   * aksi halde kısmi tur “bitti” sanılıp liste başa sarılıyor.
+   */
+  fullPassComplete?: boolean
+}
 
 export type SchedulerOnProgress = (
   id: string,
@@ -321,6 +332,16 @@ class MessageScheduler {
         ? recipients.length
         : accountIds.length * recipients.length
 
+    const repeatEndMs = scheduledMessage.repeatUntil
+      ? new Date(scheduledMessage.repeatUntil).getTime()
+      : NaN
+    if (Number.isFinite(repeatEndMs) && Date.now() >= repeatEndMs) {
+      liveLog('info', 'Çoklu tur: bitiş zamanı geldi — gönderim yapılmadan kapatılıyor', scheduledMessage.id)
+      this.activeExecutions.delete(executionKey)
+      onProgress?.(scheduledMessage.id, 0, totalCount, true, { repeatWindowEnded: true })
+      return
+    }
+
     const taskKeysForMessage = new Set<string>()
     for (let ai = 0; ai < accountIds.length; ai++) {
       const aid = accountIds[ai]
@@ -337,7 +358,7 @@ class MessageScheduler {
       console.log('✅ Tüm gönderimler önceki oturumda tamamlanmış (anahtarlar eşleşti), atlanıyor')
       liveLog('ok', 'Bu planda zaten tüm başarılı gönderimler tamamlanmış — atlanıyor', scheduledMessage.id)
       this.activeExecutions.delete(executionKey)
-      onProgress?.(scheduledMessage.id, sentCount, totalCount, true)
+      onProgress?.(scheduledMessage.id, sentCount, totalCount, true, { fullPassComplete: true })
       return
     }
 
@@ -374,11 +395,23 @@ class MessageScheduler {
     
     // Tüm hesaplar için başarısız grupları takip et
     const globalFailedGroups = new Set<string>()
-    
+
+    /** Tüm (hesap × alıcı) sırası denendi mi; erken çıkışta çoklu tur tekrarını engellemek için */
+    let fullPassComplete = true
+
     for (let ai = 0; ai < accountIds.length; ai++) {
       const accountId = accountIds[ai]
       const accountRecipients = perAccountRecipients[ai] ?? []
       const accountIndex = ai + 1
+      if (accountRecipients.length === 0) {
+        liveLog(
+          'info',
+          `Hesap ${accountIndex}/${accountIds.length}: atanmış alıcı yok`,
+          distribution === 'split_recipients'
+            ? 'Bölünmüş listede bu hesaba düşen alıcı yok — atlanıyor (gönderim sayılmaz)'
+            : 'Atlanıyor'
+        )
+      }
       liveLog(
         'step',
         `Hesap sırası ${accountIndex}/${accountIds.length}`,
@@ -392,8 +425,7 @@ class MessageScheduler {
         remainingAccounts: accountIds.length - accountIndex
       })
       
-      let accountRateLimited = false // Bu hesap için rate limit hatası alındı mı?
-      let accountHasCriticalError = false // Bu hesap için kritik hata alındı mı?
+      let accountHasCriticalError = false // Oturum/bağlantı: bu hesap için gönderim anlamsız
       let accountErrorMessages: string[] = [] // Bu hesap için alınan hatalar
       
       console.log('🔄 ========== KULLANICI/GRUP DÖNGÜSÜ BAŞLADI ==========')
@@ -403,9 +435,8 @@ class MessageScheduler {
       for (let i = 0; i < accountRecipients.length; i++) {
         const { target, displayLabel } = accountRecipients[i]
         // Eğer bu hesap kritik hata aldıysa, bu hesap için döngüyü kır
-        if (accountRateLimited || accountHasCriticalError) {
-          const reason = accountRateLimited ? 'rate limit' : 'kritik hata'
-          console.log(`⏰ Bu hesap ${reason} aldı, diğer alıcılara mesaj gönderilmeyecek:`, accountId)
+        if (accountHasCriticalError) {
+          console.log('⏰ Bu hesap kritik oturum/bağlantı hatası aldı, diğer alıcılara geçilmiyor:', accountId)
           break
         }
         
@@ -563,10 +594,25 @@ class MessageScheduler {
               `${sentCount}/${totalCount} · ${trunc(displayLabel, 48)}`
             )
             onProgress?.(scheduledMessage.id, sentCount, totalCount, false, { completedKey: pairKey })
+
+            console.log('📨 ========== MESAJ GÖNDERİMİ TAMAMLANDI ==========')
+            console.log('📨 Son durum:', {
+              accountId,
+              username: target,
+              displayLabel,
+              sentCount,
+              totalCount,
+              progress: `${sentCount}/${totalCount}`,
+            })
+
+            const tailMs = useAntiSpam ? randomAntiSpamTailMs() : 1000
+            console.log('⏳ Ek gecikme başlıyor:', tailMs, 'ms')
+            await this.delay(tailMs)
+            console.log('⏳ Ek gecikme tamamlandı')
           } else {
             liveLog(
               'warn',
-              'Gönderim başarısız (sıradaki denemeye devam)',
+              'Gönderim başarısız — sıradaki alıcıya geçiliyor',
               `${trunc(displayLabel, 48)} · ${trunc(result.error || 'Hata', 120)}`
             )
             console.error('❌ ========== MESAJ BAŞARISIZ ==========')
@@ -612,45 +658,38 @@ class MessageScheduler {
               }
             }
             
-            // Kritik hata kontrolü - bu hesap için mesaj gönderimini durdur
+            // Oturum/bağlantı: dur. Diğer tüm hatalar (flood dahil): beklemeden sıradaki alıcı.
             const errorMsg = result.error || ''
-            const isRateLimit = errorMsg.includes('rate limit') || 
-                               errorMsg.includes('Rate limit') ||
-                               errorMsg.includes('wait of') ||
-                               errorMsg.includes('beklenmesi gerekiyor') ||
-                               errorMsg.includes('FLOOD_WAIT')
-            
-            const isBanned = errorMsg.includes('USER_BANNED_IN_CHANNEL') ||
-                            errorMsg.includes('yasaklanmış')
-            
-            const isConnectionError = errorMsg.includes('bağlı değil') ||
-                                     errorMsg.includes('session bilgisi bulunamadı') ||
-                                     errorMsg.includes('yeniden bağlanılamadı') ||
-                                     errorMsg.includes('client bulunamadı')
-            
-            const isCriticalError = isRateLimit || isBanned || isConnectionError
-            
-            if (isCriticalError) {
-              if (isRateLimit) {
-                console.error('⏰ Rate limit hatası tespit edildi, bu hesap için gönderim durduruluyor:', accountId)
-                accountRateLimited = true
-              } else if (isBanned) {
-                console.error('🚫 Hesap yasaklanmış, bu hesap için gönderim durduruluyor:', accountId)
-                accountHasCriticalError = true
-              } else if (isConnectionError) {
-                console.error('🔌 Bağlantı hatası, bu hesap için gönderim durduruluyor:', accountId)
-                accountHasCriticalError = true
-              }
-              
+            const isRateLimit =
+              errorMsg.includes('rate limit') ||
+              errorMsg.includes('Rate limit') ||
+              errorMsg.includes('wait of') ||
+              errorMsg.includes('beklenmesi gerekiyor') ||
+              errorMsg.includes('FLOOD_WAIT')
+
+            const isConnectionError =
+              errorMsg.includes('bağlı değil') ||
+              errorMsg.includes('session bilgisi bulunamadı') ||
+              errorMsg.includes('yeniden bağlanılamadı') ||
+              errorMsg.includes('client bulunamadı')
+
+            if (isConnectionError) {
+              console.error('🔌 Bağlantı hatası, bu hesap için gönderim durduruluyor:', accountId)
+              accountHasCriticalError = true
+              fullPassComplete = false
               console.error('⏰ Bu hesap için diğer mesajlar atlanacak, diğer hesaplara geçilecek')
-              
-              // Bu hesap için döngüyü kır (break) - diğer hesaplara geç
               break
             }
-            
-            // Hata olsa bile ilerlemeyi güncelle (gönderilmeyen mesajlar da sayılır)
-            // Ancak sentCount'u artırmıyoruz çünkü mesaj gönderilmedi
-            // Hata olsa bile devam et, diğer mesajları göndermeyi dene
+
+            if (isRateLimit) {
+              liveLog(
+                'warn',
+                'Hız limiti — beklemeden sıradaki gruba geçiliyor',
+                trunc(displayLabel, 48)
+              )
+            }
+
+            continue
           }
         } catch (error) {
           console.error('❌ ========== MESAJ GÖNDERME EXCEPTION ==========')
@@ -667,34 +706,26 @@ class MessageScheduler {
           // Exception'ı da hata listesine ekle
           accountErrorMessages.push(`${displayLabel}: Exception - ${errorMsg}`)
           
-          // Kritik exception kontrolü
-          if (errorMsg.includes('rate limit') || 
-              errorMsg.includes('wait of') ||
-              errorMsg.includes('BANNED') ||
-              errorMsg.includes('bağlı değil')) {
-            console.error('⏰ Kritik exception tespit edildi, bu hesap için gönderim durduruluyor:', accountId)
+          const em = errorMsg.toLowerCase()
+          const connEx =
+            em.includes('bağlı değil') ||
+            (em.includes('session') && (em.includes('bulunamadı') || em.includes('invalid')))
+          if (connEx) {
+            console.error('🔌 Oturum/bağlantı exception, bu hesap için gönderim durduruluyor:', accountId)
             accountHasCriticalError = true
+            fullPassComplete = false
             break
           }
-          
-          // Hata olsa bile devam et
+          const floodEx =
+            em.includes('rate limit') ||
+            em.includes('flood_wait') ||
+            (em.includes('wait of') && em.includes('second'))
+          if (floodEx) {
+            liveLog('warn', 'Hız limiti (istisna) — sıradaki gruba geçiliyor', trunc(displayLabel, 48))
+          }
+
+          continue
         }
-
-        console.log('📨 ========== MESAJ GÖNDERİMİ TAMAMLANDI ==========')
-        console.log('📨 Son durum:', {
-          accountId,
-          username: target,
-          displayLabel,
-          sentCount,
-          totalCount,
-          progress: `${sentCount}/${totalCount}`
-        })
-
-        // Her kullanıcıya mesaj gönderdikten sonra ek delay (anti-spam açıksa hafif rastgele)
-        const tailMs = useAntiSpam ? randomAntiSpamTailMs() : 1000
-        console.log('⏳ Ek gecikme başlıyor:', tailMs, 'ms')
-        await this.delay(tailMs)
-        console.log('⏳ Ek gecikme tamamlandı')
       }
       
       console.log('🔄 ========== KULLANICI/GRUP DÖNGÜSÜ TAMAMLANDI ==========')
@@ -726,17 +757,15 @@ class MessageScheduler {
         sentCount,
         totalCount,
         progress: `${sentCount}/${totalCount}`,
-        accountRateLimited,
         accountHasCriticalError,
         errorCount: accountErrorMessages.length
       })
       
       // Eğer bu hesap sorun çıkardıysa, logla
-      if (accountRateLimited || accountHasCriticalError || accountErrorMessages.length > 0) {
+      if (accountHasCriticalError || accountErrorMessages.length > 0) {
         console.error('⚠️ ========== SORUN ÇIKARAN HESAP ==========')
         console.error('⚠️ Hesap ID:', accountId)
         console.error('⚠️ Sorun türü:', {
-          rateLimited: accountRateLimited,
           criticalError: accountHasCriticalError,
           errorCount: accountErrorMessages.length
         })
@@ -764,10 +793,15 @@ class MessageScheduler {
       `Plan ${scheduledMessage.id} · başarılı: ${sentCount}/${totalCount}`
     )
     
-    // Execution flag'ini temizle
+    const aborted = !this.activeJobs.get(scheduledMessage.id)
     this.activeExecutions.delete(`exec_${scheduledMessage.id}`)
-    
-    onProgress?.(scheduledMessage.id, sentCount, totalCount, true)
+
+    if (aborted) {
+      onProgress?.(scheduledMessage.id, sentCount, totalCount, true, { userStopped: true })
+      return
+    }
+
+    onProgress?.(scheduledMessage.id, sentCount, totalCount, true, { fullPassComplete })
   }
 
   cancelMessage(id: string): void {

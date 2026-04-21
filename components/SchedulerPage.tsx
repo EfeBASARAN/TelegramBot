@@ -80,6 +80,8 @@ export default function SchedulerPage() {
   const [scheduledAt, setScheduledAt] = useState('')
   const [delayBetweenMessages, setDelayBetweenMessages] = useState(3000) // 3 saniye
   const [delayBetweenAccounts, setDelayBetweenAccounts] = useState(5000) // 5 saniye
+  /** Boş: tek tur. Dolu: bu zamana kadar her tur bitince yeniden başlar (datetime-local) */
+  const [repeatUntilAt, setRepeatUntilAt] = useState('')
 
   const [recipientMode, setRecipientMode] = useState<'manual' | 'group_members' | 'custom_list'>('manual')
   const [customListRaw, setCustomListRaw] = useState('')
@@ -155,6 +157,14 @@ export default function SchedulerPage() {
       }
     }
 
+    let repeatUntilLabel = ''
+    if (repeatUntilAt) {
+      const d = new Date(repeatUntilAt)
+      if (!Number.isNaN(d.getTime())) {
+        repeatUntilLabel = d.toLocaleString('tr-TR', { dateStyle: 'medium', timeStyle: 'short' })
+      }
+    }
+
     return {
       accountLabels,
       distLabel,
@@ -163,6 +173,7 @@ export default function SchedulerPage() {
       templateName: tmpl?.name ?? '',
       contentSnippet,
       scheduledLabel,
+      repeatUntilLabel,
       delayMsgSec: delayBetweenMessages / 1000,
       delayAccSec: delayBetweenAccounts / 1000,
       antiSpam: selectedTemplateAntiSpam,
@@ -179,6 +190,7 @@ export default function SchedulerPage() {
     messageTemplates,
     selectedTemplateId,
     scheduledAt,
+    repeatUntilAt,
     delayBetweenMessages,
     delayBetweenAccounts,
     selectedTemplateAntiSpam,
@@ -366,6 +378,20 @@ export default function SchedulerPage() {
       return
     }
 
+    let repeatUntilDate: Date | undefined
+    if (repeatUntilAt.trim()) {
+      const ru = new Date(repeatUntilAt)
+      if (Number.isNaN(ru.getTime())) {
+        pushToast('Bitiş tarihi ve saati geçerli değil', 'info')
+        return
+      }
+      if (ru.getTime() <= scheduledDateTime.getTime()) {
+        pushToast('Bitiş zamanı, ilk gönderim zamanından sonra olmalıdır', 'info')
+        return
+      }
+      repeatUntilDate = ru
+    }
+
     if (recipientMode === 'manual' && !usernames.trim()) {
       pushToast('Alıcı listesini doldurun veya başka bir alıcı modunu seçin', 'info')
       return
@@ -487,6 +513,7 @@ export default function SchedulerPage() {
           accountDistribution,
           totalCount,
           sentCount: 0,
+          repeatUntil: repeatUntilDate,
         })
       }
     } else {
@@ -506,6 +533,7 @@ export default function SchedulerPage() {
         isActive: false,
         sentCount: 0,
         totalCount,
+        repeatUntil: repeatUntilDate,
       }
 
       addScheduledMessage(newScheduledMessage)
@@ -529,6 +557,7 @@ export default function SchedulerPage() {
     setScheduledAt(toDatetimeLocalString(new Date()))
     setDelayBetweenMessages(3000)
     setDelayBetweenAccounts(5000)
+    setRepeatUntilAt('')
     setGroupListAccountId('')
     setModalStep(1)
   }
@@ -626,6 +655,11 @@ export default function SchedulerPage() {
     setScheduledAt(toDatetimeLocalString(new Date(scheduledMessage.scheduledTime)))
     setDelayBetweenMessages(scheduledMessage.delayBetweenMessages)
     setDelayBetweenAccounts(scheduledMessage.delayBetweenAccounts)
+    setRepeatUntilAt(
+      scheduledMessage.repeatUntil
+        ? toDatetimeLocalString(new Date(scheduledMessage.repeatUntil))
+        : ''
+    )
 
     setModalStep(1)
     setShowAddModal(true)
@@ -651,10 +685,17 @@ export default function SchedulerPage() {
       usernames: scheduledMessage.usernames
     })
 
+    // Yarım kalan tur (hata / durdurma sonrası tekrar başlat): ilerlemeyi koru.
+    // Tur bittiyse (sentCount >= totalCount) yeni çalıştırma için sayaç ve anahtarları sıfırla.
+    const tourIncomplete =
+      scheduledMessage.totalCount > 0 &&
+      scheduledMessage.sentCount < scheduledMessage.totalCount
+
     updateScheduledMessage(scheduledMessage.id, {
       isActive: true,
-      completedSendKeys: [],
-      sentCount: 0,
+      ...(tourIncomplete
+        ? {}
+        : { completedSendKeys: [], sentCount: 0 }),
       runStartedAt: new Date(),
     })
     console.log('✅ Mesaj aktif yapıldı:', scheduledMessage.id)
@@ -714,7 +755,8 @@ export default function SchedulerPage() {
           <h2 className="text-4xl font-bold text-white mb-3 gradient-text tracking-tight">Zamanlayıcı</h2>
           <p className="text-white/50 text-base font-medium max-w-2xl">
             Tarih ve saat seçin, hesabı ve alıcıları eşleyin; mesajlar arası ve hesaplar arası gecikmeyi
-            saniye cinsinden ayarlayın. Plan tek seferlik çalışır.
+            saniye cinsinden ayarlayın. İsteğe bağlı bitiş zamanı ile aynı planı bitişe kadar tekrarlayan
+            turlar halinde çalıştırabilirsiniz.
           </p>
         </div>
         <button
@@ -875,6 +917,16 @@ export default function SchedulerPage() {
                             : 'Her hesap tümü'}
                         </span>
                       </div>
+                      {scheduledMessage.repeatUntil && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-white/50 font-semibold min-w-[100px] text-xs">
+                            Çoklu tur bitiş:
+                          </span>
+                          <span className="text-white font-medium text-xs">
+                            {formatDateTime(scheduledMessage.repeatUntil)}
+                          </span>
+                        </div>
+                      )}
                       {!scheduledMessage.isActive && timeRemaining.get(scheduledMessage.id) && (
                         <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/10">
                           <span className="text-yellow-400 font-semibold text-xs">Durum:</span>
@@ -1331,6 +1383,26 @@ export default function SchedulerPage() {
                 />
               </div>
 
+              <div>
+                <label
+                  htmlFor="scheduler-repeat-until"
+                  className="block text-sm font-bold text-white mb-2 tracking-tight"
+                >
+                  Çoklu tur — bitiş (isteğe bağlı)
+                </label>
+                <p className="text-xs text-white/45 mb-2 leading-relaxed">
+                  Doluysa: her tur tamamlanınca birkaç saniye bekleyip yeniden başlar; bu zamana kadar
+                  çalışır. Boş bırakırsanız tek tur gönderilir.
+                </p>
+                <input
+                  id="scheduler-repeat-until"
+                  type="datetime-local"
+                  value={repeatUntilAt}
+                  onChange={(e) => setRepeatUntilAt(e.target.value)}
+                  className="input-focus w-full px-3 py-2.5 rounded-xl text-white focus:outline-none text-sm [color-scheme:dark]"
+                />
+              </div>
+
               {selectedTemplateAntiSpam && (
                 <p className="text-xs text-emerald-400/90 leading-relaxed -mt-1 mb-1">
                   Anti-spam açık: aşağıdaki saniyeler <span className="text-emerald-300/95 font-semibold">sabit bekleme değildir</span>
@@ -1443,6 +1515,12 @@ export default function SchedulerPage() {
                         </p>
                       ) : null}
                     </div>
+                    {schedulerPreview.repeatUntilLabel ? (
+                      <div className="sm:col-span-2">
+                        <span className="font-semibold text-white/55 block mb-0.5">Çoklu tur bitişi</span>
+                        <p className="text-white/90">{schedulerPreview.repeatUntilLabel}</p>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </div>

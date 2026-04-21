@@ -41,6 +41,25 @@ const { machineId, minutes } = parseArgs()
 const mins = Number.isFinite(minutes) && minutes > 0 ? minutes : 3
 
 if (!machineId || !/^[a-f0-9]{64}$/i.test(machineId)) {
+  const a = process.argv.slice(2)
+  for (const x of a) {
+    const raw = String(x).trim()
+    if (!/^[a-f0-9]+$/i.test(raw) || raw.length <= 64) continue
+    const mEnd = raw.match(/^([a-f0-9]{64})(\d+)$/i)
+    if (mEnd) {
+      console.error('Hata: Makine kodunun sonuna dakika yapışmış (tek parça yapıştırılmış).')
+      console.error('  Doğru: iki ayrı argüman — önce 64 hex, sonra dakika (arada boşluk).')
+      console.error('  Örnek: npm run license:issue -- ' + mEnd[1] + ' ' + mEnd[2])
+      process.exit(1)
+    }
+  }
+  const almost = a.find((x) => /^[a-f0-9]+$/i.test(String(x).trim()))
+  if (almost && String(almost).trim().length !== 64) {
+    console.error(
+      'Hata: Makine kodu tam 64 hex karakter olmalı (şu an ' + String(almost).trim().length + ' karakter).'
+    )
+    console.error('  Uygulamadan makine kodunu tek başına kopyalayın; sonda ekstra rakam/harf olmasın.')
+  }
   console.error('Kullanım:')
   console.error('  node scripts/issue-license.mjs --machine-id <64 hex> [--minutes 3]')
   console.error('  node scripts/issue-license.mjs <64 hex> [dakika]')
