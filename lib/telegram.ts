@@ -62,6 +62,39 @@ function channelEntityLikelyAllowsParticipantList(channel: Api.Channel): boolean
   return true
 }
 
+function extractInviteHash(raw: string): string | null {
+  const s = raw.trim()
+  if (!s) return null
+
+  const joinChat = s.match(/joinchat\/([A-Za-z0-9_-]{16,})/i)
+  if (joinChat?.[1]) return joinChat[1]
+
+  const plus = s.match(/t\.me\/\+([A-Za-z0-9_-]{16,})/i)
+  if (plus?.[1]) return plus[1]
+
+  const tgJoin = s.match(/tg:\/\/join\?invite=([A-Za-z0-9_-]{16,})/i)
+  if (tgJoin?.[1]) return tgJoin[1]
+
+  return null
+}
+
+function normalizeJoinTarget(raw: string): { kind: 'invite'; hash: string } | { kind: 'username'; value: string } | null {
+  const s = raw.trim()
+  if (!s) return null
+
+  const inviteHash = extractInviteHash(s)
+  if (inviteHash) {
+    return { kind: 'invite', hash: inviteHash }
+  }
+
+  const noProto = s.replace(/^https?:\/\//i, '').replace(/^t\.me\//i, '')
+  const clean = noProto.replace(/^@/, '').split(/[/?#]/)[0]?.trim()
+  if (!clean) return null
+
+  if (!/^[A-Za-z][A-Za-z0-9_]{4,}$/.test(clean)) return null
+  return { kind: 'username', value: clean }
+}
+
 export interface GroupMemberInfo {
   id: string
   firstName?: string
@@ -1159,6 +1192,102 @@ class TelegramManager {
       return {
         success: false,
         error: error.message || error.errorMessage || 'Gruplardan çıkılamadı',
+      }
+    }
+  }
+
+  /**
+   * Verilen hedeflere (kullanıcı adı veya davet link/hash) seçili hesapla katılır.
+   * Her hedef için ayrı sonuç döner; kısmi başarı mümkündür.
+   */
+  async joinChatsByTargets(
+    accountId: string,
+    sessionString: string | undefined,
+    phoneNumber: string | undefined,
+    apiId: string | undefined,
+    apiHash: string | undefined,
+    rawTargets: string[]
+  ): Promise<{
+    success: boolean
+    error?: string
+    results?: Array<{ target: string; ok: boolean; message: string }>
+  }> {
+    try {
+      const ready = await this.ensureClientForAccount(
+        accountId,
+        sessionString,
+        phoneNumber,
+        apiId,
+        apiHash
+      )
+      if (!ready.ok) {
+        return { success: false, error: ready.error }
+      }
+
+      const client = ready.client
+      const results: Array<{ target: string; ok: boolean; message: string }> = []
+
+      for (const raw of rawTargets) {
+        const target = raw.trim()
+        if (!target) continue
+
+        const normalized = normalizeJoinTarget(target)
+        if (!normalized) {
+          results.push({ target, ok: false, message: 'Geçersiz hedef formatı' })
+          continue
+        }
+
+        try {
+          if (normalized.kind === 'invite') {
+            await client.invoke(
+              new Api.messages.ImportChatInvite({
+                hash: normalized.hash,
+              })
+            )
+            results.push({ target, ok: true, message: 'Davet linki ile katıldı' })
+          } else {
+            const entity = await client.getEntity(`@${normalized.value}`)
+            if (entity instanceof Api.Channel) {
+              if (entity.left) {
+                if (entity.accessHash == null) {
+                  results.push({ target, ok: false, message: 'Bu hedef için access hash alınamadı' })
+                  continue
+                }
+                await client.invoke(
+                  new Api.channels.JoinChannel({
+                    channel: new Api.InputChannel({
+                      channelId: returnBigInt(entity.id),
+                      accessHash: returnBigInt(entity.accessHash),
+                    }),
+                  })
+                )
+                results.push({ target, ok: true, message: 'Kanala/gruba katıldı' })
+              } else {
+                results.push({ target, ok: true, message: 'Zaten üye' })
+              }
+            } else if (entity instanceof Api.Chat) {
+              results.push({ target, ok: true, message: 'Bu grupta zaten görünüyor' })
+            } else {
+              results.push({ target, ok: false, message: 'Hedef grup/kanal değil' })
+            }
+          }
+        } catch (err: any) {
+          const rawErr = String(err?.errorMessage || err?.message || err || 'Katılım hatası')
+          results.push({
+            target,
+            ok: false,
+            message: formatUserFacingTelegramError(rawErr, 'general'),
+          })
+        }
+
+        await new Promise((r) => setTimeout(r, 200))
+      }
+
+      return { success: true, results }
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || error.errorMessage || 'Katılım işlemi başarısız',
       }
     }
   }

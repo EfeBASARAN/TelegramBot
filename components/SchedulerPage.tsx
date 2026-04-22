@@ -951,6 +951,9 @@ export default function SchedulerPage() {
             const selectedAccounts = accounts.filter((acc) =>
               scheduledMessage.accountIds?.includes(acc.id) || false
             )
+            const accountNames = selectedAccounts
+              .map((a) => `${a.firstName || a.phoneNumber}${a.username ? ` (@${a.username})` : ''}`)
+              .join(', ')
 
             return (
               <div
@@ -962,8 +965,13 @@ export default function SchedulerPage() {
                 
                 <div className="flex flex-col gap-3 relative z-10">
                   <div className="flex justify-between items-start">
-                    <h3 className="font-bold text-white text-lg mb-2 tracking-tight line-clamp-1">
+                    <h3 className="font-bold text-white text-lg mb-2 tracking-tight line-clamp-1 flex items-center gap-2 min-w-0">
                       {template?.name || 'Şablon silinmiş veya bulunamadı'}
+                      {accountNames && (
+                        <span className="text-xs font-medium text-white/60 truncate">
+                          · {accountNames}
+                        </span>
+                      )}
                     </h3>
                   </div>
                   <div className="space-y-1.5 text-xs">

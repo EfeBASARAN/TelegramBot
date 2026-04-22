@@ -10,6 +10,7 @@ import SettingsPage from '@/components/SettingsPage'
 import LogsPage from '@/components/LogsPage'
 import LiveWatchPage from '@/components/LiveWatchPage'
 import GroupsPage from '@/components/GroupsPage'
+import JoinPage from '@/components/JoinPage'
 import ToastStack from '@/components/ToastStack'
 import { useAppStore } from '@/store/appStore'
 import { telegramManager } from '@/lib/telegram'
@@ -230,6 +231,8 @@ export default function Home() {
         return <AccountsPage />
       case 'groups':
         return <GroupsPage />
+      case 'join':
+        return <JoinPage />
       case 'messages':
         return <MessagesPage />
       case 'scheduler':

@@ -66,7 +66,15 @@ export interface ScheduledMessage {
   repeatUntil?: Date
 }
 
-type Page = 'accounts' | 'groups' | 'messages' | 'scheduler' | 'settings' | 'logs' | 'live'
+type Page =
+  | 'accounts'
+  | 'groups'
+  | 'messages'
+  | 'scheduler'
+  | 'settings'
+  | 'logs'
+  | 'live'
+  | 'join'
 
 /** Canlı konsol satırı (bellekte; sayfa yenilenince sıfırlanır) */
 export type LiveBotLogLevel = 'info' | 'ok' | 'warn' | 'err' | 'step'
