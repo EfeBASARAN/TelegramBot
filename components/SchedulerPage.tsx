@@ -83,7 +83,9 @@ export default function SchedulerPage() {
   /** Boş: tek tur. Dolu: bu zamana kadar her tur bitince yeniden başlar (datetime-local) */
   const [repeatUntilAt, setRepeatUntilAt] = useState('')
 
-  const [recipientMode, setRecipientMode] = useState<'manual' | 'group_members' | 'custom_list'>('manual')
+  const [recipientMode, setRecipientMode] = useState<
+    'manual' | 'group_members' | 'custom_list' | 'joined_groups'
+  >('manual')
   const [customListRaw, setCustomListRaw] = useState('')
   const [groupsForPicker, setGroupsForPicker] = useState<JoinedGroupInfo[]>([])
   const [selectedGroup, setSelectedGroup] = useState<JoinedGroupInfo | null>(null)
@@ -91,6 +93,8 @@ export default function SchedulerPage() {
   const [groupsError, setGroupsError] = useState('')
   /** Grup modunda: üye listesi / getJoinedGroups bu hesapla (gönderimdeki çoklu seçimden ayrı). */
   const [groupListAccountId, setGroupListAccountId] = useState('')
+  const [joinedGroupsLoading, setJoinedGroupsLoading] = useState(false)
+  const [joinedGroupsError, setJoinedGroupsError] = useState('')
 
   const customListValidation = useMemo(
     () => validateCustomPeerListInput(customListRaw),
@@ -127,7 +131,7 @@ export default function SchedulerPage() {
       const n = customListValidation.isValid ? customListValidation.recipientCount : null
       recipientTitle =
         n != null ? `Özel liste · ${n} alıcı` : 'Özel liste · formatı kontrol edin'
-    } else {
+    } else if (recipientMode === 'group_members') {
       recipientTitle = 'Seçili grup üyeleri'
       recipientExtra = selectedGroup
         ? `${selectedGroup.title}${
@@ -140,6 +144,15 @@ export default function SchedulerPage() {
               : ''
           }`
         : 'Grup seçilmedi'
+    } else {
+      const n = usernames
+        .split('\n')
+        .map((u) => u.trim())
+        .filter((u) => u.length > 0).length
+      recipientTitle = `Katıldığım gruplar · ${n} kullanıcı adı`
+      recipientExtra = groupListAccountId
+        ? 'Liste, seçilen hesabın katıldığı kullanıcı adlı gruplardan otomatik doldurulur.'
+        : 'Hesap seçilmedi'
     }
 
     const tmpl = messageTemplates.find((t) => t.id === selectedTemplateId)
@@ -187,6 +200,7 @@ export default function SchedulerPage() {
     customListValidation.isValid,
     customListValidation.recipientCount,
     selectedGroup,
+    groupListAccountId,
     messageTemplates,
     selectedTemplateId,
     scheduledAt,
@@ -215,9 +229,9 @@ export default function SchedulerPage() {
     }
   }, [])
 
-  /** Grup modunda liste hesabı yoksa veya artık bağlı değilse ilk bağlı hesabı kullan. */
+  /** Grup modlarında liste hesabı yoksa veya artık bağlı değilse ilk bağlı hesabı kullan. */
   useEffect(() => {
-    if (!showAddModal || recipientMode !== 'group_members') return
+    if (!showAddModal || (recipientMode !== 'group_members' && recipientMode !== 'joined_groups')) return
     if (!firstConnectedAccountId) return
     setGroupListAccountId((prev) => {
       if (prev && connectedAccounts.some((a) => a.id === prev)) return prev
@@ -279,6 +293,73 @@ export default function SchedulerPage() {
       .finally(() => {
         if (!cancelled) setLoadingGroups(false)
       })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    showAddModal,
+    recipientMode,
+    groupListAccountId,
+    accounts,
+    apiConfig,
+    connectedAccounts.length,
+  ])
+
+  useEffect(() => {
+    if (!showAddModal || recipientMode !== 'joined_groups') return
+    if (!groupListAccountId) {
+      setJoinedGroupsError(
+        connectedAccounts.length === 0
+          ? 'Grup listesi için önce bir hesabı bağlayın (Hesaplar sayfasından giriş).'
+          : ''
+      )
+      setUsernames('')
+      return
+    }
+    const account = accounts.find((a) => a.id === groupListAccountId)
+    if (!account?.sessionString) {
+      setJoinedGroupsError('Seçili hesapta oturum yok')
+      setUsernames('')
+      return
+    }
+
+    let cancelled = false
+    setJoinedGroupsLoading(true)
+    setJoinedGroupsError('')
+    const apiId = account.apiId || apiConfig?.apiId
+    const apiHash = account.apiHash || apiConfig?.apiHash
+    void telegramManager
+      .getJoinedGroupUsernames(
+        account.id,
+        account.sessionString,
+        account.phoneNumber,
+        apiId,
+        apiHash
+      )
+      .then((res) => {
+        if (cancelled) return
+        if (!res.success) {
+          setUsernames('')
+          setJoinedGroupsError(res.error || 'Katılınan gruplar yüklenemedi')
+          return
+        }
+        const list = res.usernames || []
+        setUsernames(list.join('\n'))
+        setJoinedGroupsError(
+          list.length === 0
+            ? 'Bu hesap için kullanıcı adı olan grup/kanal bulunamadı.'
+            : ''
+        )
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return
+        setUsernames('')
+        setJoinedGroupsError(e instanceof Error ? e.message : 'Hata')
+      })
+      .finally(() => {
+        if (!cancelled) setJoinedGroupsLoading(false)
+      })
+
     return () => {
       cancelled = true
     }
@@ -423,7 +504,7 @@ export default function SchedulerPage() {
 
     let usernameList: string[] = []
     let totalCount = 0
-    let mode: 'manual' | 'group_members' | 'custom_list' = 'manual'
+    let mode: 'manual' | 'group_members' | 'custom_list' | 'joined_groups' = 'manual'
     let groupTarget: JoinedGroupInfo | undefined
     let savedCustomRaw: string | undefined = undefined
 
@@ -458,7 +539,7 @@ export default function SchedulerPage() {
           : accountIds.length * usernameList.length
       mode = 'custom_list'
       savedCustomRaw = customListRaw.trim()
-    } else {
+    } else if (recipientMode === 'group_members') {
       const listAccount = accounts.find((a) => a.id === groupListAccountId)
       if (!listAccount?.sessionString) {
         pushToast('Grup listesi hesabının oturumu açık olmalı', 'error')
@@ -493,6 +574,20 @@ export default function SchedulerPage() {
         accountDistribution === 'split_recipients' ? n : accountIds.length * n
       mode = 'group_members'
       groupTarget = selectedGroup!
+    } else {
+      usernameList = usernames
+        .split('\n')
+        .map((u) => u.trim())
+        .filter((u) => u.length > 0)
+      if (usernameList.length === 0) {
+        pushToast('Katıldığın gruplar listesi boş. Hesap seçip tekrar dene.', 'info')
+        return
+      }
+      totalCount =
+        accountDistribution === 'split_recipients'
+          ? usernameList.length
+          : accountIds.length * usernameList.length
+      mode = 'joined_groups'
     }
 
     // Düzenleme modunda mı?
@@ -504,7 +599,8 @@ export default function SchedulerPage() {
           usernames: usernameList,
           recipientMode: mode,
           groupTarget: mode === 'group_members' ? groupTarget : undefined,
-          groupListAccountId: mode === 'group_members' ? groupListAccountId : undefined,
+          groupListAccountId:
+            mode === 'group_members' || mode === 'joined_groups' ? groupListAccountId : undefined,
           customListRaw: mode === 'custom_list' ? savedCustomRaw : undefined,
           messageTemplateId: selectedTemplateId,
           scheduledTime: scheduledDateTime,
@@ -523,7 +619,8 @@ export default function SchedulerPage() {
         usernames: usernameList,
         recipientMode: mode,
         groupTarget: mode === 'group_members' ? groupTarget : undefined,
-        groupListAccountId: mode === 'group_members' ? groupListAccountId : undefined,
+        groupListAccountId:
+          mode === 'group_members' || mode === 'joined_groups' ? groupListAccountId : undefined,
         customListRaw: mode === 'custom_list' ? savedCustomRaw : undefined,
         messageTemplateId: selectedTemplateId,
         scheduledTime: scheduledDateTime,
@@ -549,6 +646,7 @@ export default function SchedulerPage() {
     setSelectedGroup(null)
     setGroupsForPicker([])
     setGroupsError('')
+    setJoinedGroupsError('')
     setEditingMessageId(null)
     setSelectedAccountIds(new Set())
     setAccountDistribution('each_to_all')
@@ -559,6 +657,7 @@ export default function SchedulerPage() {
     setDelayBetweenAccounts(5000)
     setRepeatUntilAt('')
     setGroupListAccountId('')
+    setJoinedGroupsLoading(false)
     setModalStep(1)
   }
 
@@ -610,6 +709,27 @@ export default function SchedulerPage() {
       }
       if (!selectedGroup) {
         pushToast('Bir grup seçin', 'info')
+        return false
+      }
+    } else if (recipientMode === 'joined_groups') {
+      if (!groupListAccountId || !connectedAccounts.some((a) => a.id === groupListAccountId)) {
+        pushToast('Grup listesi için bir hesap seçin', 'info')
+        return false
+      }
+      if (joinedGroupsLoading) {
+        pushToast('Katılınan gruplar yükleniyor, birkaç saniye bekleyin', 'info')
+        return false
+      }
+      if (joinedGroupsError) {
+        pushToast('Katılınan gruplar alınamadı; hata mesajını kontrol edin', 'error')
+        return false
+      }
+      const lines = usernames
+        .split('\n')
+        .map((u) => u.trim())
+        .filter((u) => u.length > 0)
+      if (lines.length === 0) {
+        pushToast('Bu hesap için kullanıcı adı olan grup bulunamadı', 'info')
         return false
       }
     }
@@ -896,6 +1016,8 @@ export default function SchedulerPage() {
                             </>
                           ) : (scheduledMessage.recipientMode ?? 'manual') === 'custom_list' ? (
                             <>Özel liste (ID + access hash): {scheduledMessage.usernames?.length || 0} alıcı</>
+                          ) : (scheduledMessage.recipientMode ?? 'manual') === 'joined_groups' ? (
+                            <>Katıldığı gruplar: {scheduledMessage.usernames?.length || 0} kullanıcı adı</>
                           ) : (
                             <>{scheduledMessage.usernames?.length || 0} alıcı</>
                           )}
@@ -1169,6 +1291,18 @@ export default function SchedulerPage() {
                       Özel liste (ID | hash veya kullanıcı | ID | hash)
                     </span>
                   </label>
+                  <label className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-white/5 border border-white/5">
+                    <input
+                      type="radio"
+                      name="recipientMode"
+                      checked={recipientMode === 'joined_groups'}
+                      onChange={() => setRecipientMode('joined_groups')}
+                      className="accent-white"
+                    />
+                    <span className="text-white text-sm">
+                      Katıldığım tüm gruplar (kullanıcı adları otomatik doldurulsun)
+                    </span>
+                  </label>
                 </div>
 
                 {recipientMode === 'manual' ? (
@@ -1246,7 +1380,7 @@ export default function SchedulerPage() {
                       kullanıcı adı varsa önce o ile çözülür. Boş satırlar yok sayılır.
                     </p>
                   </>
-                ) : (
+                ) : recipientMode === 'group_members' ? (
                   <div className="space-y-3">
                     <p className="text-xs text-white/50">
                       Gönderim, plan çalıştığında gruptan güncel üye listesi ile yapılır. Botlar atlanır.
@@ -1341,6 +1475,54 @@ export default function SchedulerPage() {
                         </select>
                       </div>
                     )}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-xs text-white/50">
+                      Seçilen hesapta katıldığın kullanıcı adı olan grup/kanal adları otomatik çekilir ve
+                      alıcı listesine eklenir.
+                    </p>
+                    <div>
+                      <label
+                        htmlFor="scheduler-joined-groups-account"
+                        className="block text-xs font-semibold text-white/70 mb-1.5"
+                      >
+                        Grup listesini çekilecek hesap
+                      </label>
+                      <select
+                        id="scheduler-joined-groups-account"
+                        value={groupListPickerValue}
+                        onChange={(e) => setGroupListAccountId(e.target.value)}
+                        className="input-focus w-full px-3 py-2.5 rounded-xl text-white focus:outline-none text-sm"
+                      >
+                        <option value="">— Hesap seçin —</option>
+                        {connectedAccounts.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.firstName || a.phoneNumber}
+                            {a.username ? ` (@${a.username})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {joinedGroupsLoading && (
+                      <div className="flex items-center gap-2 text-white/60 text-sm py-1">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Katılınan gruplar yükleniyor…
+                      </div>
+                    )}
+                    {joinedGroupsError && <p className="text-xs text-amber-300">{joinedGroupsError}</p>}
+                    <div>
+                      <label className="block text-xs font-semibold text-white/70 mb-1">
+                        Otomatik doldurulan alıcı listesi
+                      </label>
+                      <textarea
+                        value={usernames}
+                        readOnly
+                        rows={7}
+                        className="input-focus w-full px-3 py-2.5 rounded-xl text-white/90 placeholder-white/25 focus:outline-none resize-y text-sm font-mono"
+                        placeholder="Hesap seçildiğinde kullanıcı adları burada listelenir"
+                      />
+                    </div>
                   </div>
                 )}
               </div>

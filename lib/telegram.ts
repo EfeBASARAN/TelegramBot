@@ -1027,6 +1027,63 @@ class TelegramManager {
   }
 
   /**
+   * Hesabın katıldığı sohbetlerden kullanıcı adı olan grup/kanal adlarını döndürür.
+   * Zamanlayıcıda "katıldığım tüm gruplara gönder" senaryosu için kullanılır.
+   */
+  async getJoinedGroupUsernames(
+    accountId: string,
+    sessionString?: string,
+    phoneNumber?: string,
+    apiId?: string,
+    apiHash?: string
+  ): Promise<{ success: boolean; error?: string; usernames?: string[] }> {
+    try {
+      const ready = await this.ensureClientForAccount(
+        accountId,
+        sessionString,
+        phoneNumber,
+        apiId,
+        apiHash
+      )
+      if (!ready.ok) {
+        return { success: false, error: ready.error }
+      }
+      const client = ready.client
+      const dialogs = await client.getDialogs({ limit: 500 })
+      const usernames = new Set<string>()
+
+      for (const d of dialogs) {
+        const entity = d.entity
+        if (!entity) continue
+        if (entity instanceof Api.User) continue
+        if (entity instanceof Api.ChatForbidden || entity instanceof Api.ChannelForbidden) continue
+
+        if (entity instanceof Api.Channel) {
+          if (entity.left) continue
+          const u = entity.username?.trim()
+          if (u) usernames.add(`@${u.replace(/^@/, '')}`)
+          continue
+        }
+
+        if (entity instanceof Api.Chat) {
+          const u = (entity as unknown as { username?: string }).username?.trim()
+          if (u) usernames.add(`@${u.replace(/^@/, '')}`)
+        }
+      }
+
+      const sorted = Array.from(usernames).sort((a, b) =>
+        a.localeCompare(b, 'tr', { sensitivity: 'base' })
+      )
+      return { success: true, usernames: sorted }
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || error.errorMessage || 'Katılınan grup kullanıcı adları alınamadı',
+      }
+    }
+  }
+
+  /**
    * Diyalog listesindeki tüm temel gruplar, süper gruplar ve abone olunan kanallardan çıkar.
    * (Liste sınırı: son ~500 diyalog; çok fazla sohbet varsa tamamı görünmeyebilir.)
    * Kanal/grup sahibi olduğunuz yerlerde Telegram reddedebilir — failedCount artar.

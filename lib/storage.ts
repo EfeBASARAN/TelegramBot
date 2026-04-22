@@ -33,7 +33,7 @@ export interface StoredScheduledMessage {
   id: string
   accountIds: string[]
   usernames: string[]
-  recipientMode?: 'manual' | 'group_members' | 'custom_list'
+  recipientMode?: 'manual' | 'group_members' | 'custom_list' | 'joined_groups'
   customListRaw?: string
   groupTarget?: JoinedGroupInfo
   groupListAccountId?: string
