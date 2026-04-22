@@ -250,6 +250,7 @@ class TelegramManager {
   private clients: Map<string, TelegramClientWrapper> = new Map()
   private apiId: number = 0
   private apiHash: string = ''
+  private selfIdCache: Map<string, string> = new Map()
 
   /** Arayüz patch’lenmiş olsa bile Telegram API yolunu kilitlemek için */
   private async requireLicenseOrError(): Promise<string | null> {
@@ -780,6 +781,45 @@ class TelegramManager {
         resultType: typeof sendResult,
         result: sendResult
       })
+
+      // Bazı gruplarda otomasyon/bot moderasyonu nedeniyle API başarılı dönse bile mesaj düşmeyebiliyor.
+      // Bu durumda son mesajı hızlıca kontrol edip gerçekten bu hesaptan gönderildiğini doğrula.
+      try {
+        await new Promise((r) => setTimeout(r, 450))
+        const me = await client.getMe()
+        const myId = String((me as { id?: unknown }).id ?? '')
+        if (myId) {
+          this.selfIdCache.set(accountId, myId)
+        }
+        const expectedMeId = this.selfIdCache.get(accountId) || myId
+        const recent = await client.getMessages(entity, { limit: 1 })
+        const last = Array.isArray(recent) ? recent[0] : undefined
+        const lastText = String(
+          (last as { message?: string; text?: string })?.message ??
+            (last as { text?: string })?.text ??
+            ''
+        ).trim()
+        const lastSenderIdRaw =
+          (last as { senderId?: { value?: unknown } | unknown })?.senderId
+        const lastSenderId =
+          typeof lastSenderIdRaw === 'object' && lastSenderIdRaw && 'value' in lastSenderIdRaw
+            ? String((lastSenderIdRaw as { value?: unknown }).value ?? '')
+            : String(lastSenderIdRaw ?? '')
+
+        const sentByMe = expectedMeId && lastSenderId ? expectedMeId === lastSenderId : true
+        const textMatches = lastText.length > 0
+
+        if (!sentByMe || !textMatches) {
+          return {
+            success: false,
+            error:
+              'Mesaj API tarafından kabul edilse de sohbete düşmedi (hesap susturulmuş veya yazma yetkisi kısıtlı olabilir).',
+          }
+        }
+      } catch (verifyErr) {
+        // Doğrulama başarısızsa ana gönderimi bozma; yalnızca logla.
+        console.warn('⚠️ Gönderim sonrası doğrulama yapılamadı:', verifyErr)
+      }
       
       console.log('✅ Mesaj başarıyla gönderildi:', accountId, '->', username)
       console.log('📨 ========== sendMessage BAŞARILI ==========')
