@@ -810,11 +810,17 @@ class TelegramManager {
         const textMatches = lastText.length > 0
 
         if (!sentByMe || !textMatches) {
-          return {
-            success: false,
-            error:
-              'Mesaj API tarafından kabul edilse de sohbete düşmedi (hesap susturulmuş veya yazma yetkisi kısıtlı olabilir).',
-          }
+          // Bu kontrol yalnızca erken uyarıdır; yoğun sohbetlerde son mesaj çok hızlı değişebilir.
+          // API gönderimi başarılıysa false-negative üretmemek için hataya çevirmiyoruz.
+          console.warn(
+            '⚠️ Gönderim sonrası doğrulama şüpheli:',
+            JSON.stringify({ accountId, username, sentByMe, textMatches })
+          )
+          liveLog(
+            'warn',
+            'Gönderim doğrulaması kesinleşmedi (mesaj gönderilmiş olabilir)',
+            trunc(cleanUsername, 64)
+          )
         }
       } catch (verifyErr) {
         // Doğrulama başarısızsa ana gönderimi bozma; yalnızca logla.
