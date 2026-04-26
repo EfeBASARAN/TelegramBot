@@ -17,6 +17,7 @@ import {
   type StoredErrorLog,
 } from '@/lib/storage'
 import type { JoinedGroupInfo } from '@/lib/telegram'
+import type { TemplatePhotoPayload } from '@/lib/templatePhoto'
 
 export interface TelegramAccount {
   id: string
@@ -34,6 +35,8 @@ export interface MessageTemplate {
   id: string
   content: string
   name: string
+  /** Opsiyonel: dosya seçiciyle eklenen görsel (yalnızca bu cihazda; base64). */
+  mediaPhoto?: TemplatePhotoPayload
   /** Açıksa: rastgele gecikmeler + her gönderimde metne hafif görünmez/boşluk varyasyonu (aynı metin imzasını kırar). */
   antiSpamDelay?: boolean
 }

@@ -6,6 +6,7 @@ import { formatUserFacingTelegramError } from './telegramErrorMessages'
 import { ScheduledMessage } from '@/store/appStore'
 import { varyMessageAntiSpam } from '@/lib/antiSpamText'
 import { liveLog, trunc } from '@/lib/botLiveLog'
+import type { TemplatePhotoPayload } from '@/lib/templatePhoto'
 
 /** Zamanlayıcıdaki mesajlar/hesaplar arası (ms) değerine göre her beklemede rastgele süre; üst/alt sınır otomatik. */
 function randomAntiSpamGapMs(baseMs: number): number {
@@ -19,7 +20,12 @@ function randomAntiSpamTailMs(): number {
   return 500 + Math.floor(Math.random() * 1700)
 }
 
-type SchedulerTemplate = { content: string; name?: string; antiSpamDelay?: boolean }
+type SchedulerTemplate = {
+  content: string
+  name?: string
+  mediaPhoto?: TemplatePhotoPayload
+  antiSpamDelay?: boolean
+}
 
 export type SchedulerOnProgressMeta = {
   completedKey?: string
@@ -548,7 +554,8 @@ class MessageScheduler {
             accountInfo?.sessionString,
             accountInfo?.phoneNumber,
             accountInfo?.apiId,
-            accountInfo?.apiHash
+            accountInfo?.apiHash,
+            template.mediaPhoto
           )
 
           console.log('📥 Gönderim sonucu:', {

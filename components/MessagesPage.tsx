@@ -1,35 +1,113 @@
 'use client'
 
-import { useState } from 'react'
-import { Plus, Trash2, Edit2, MessageSquare } from 'lucide-react'
+import { useRef, useState, type ChangeEvent } from 'react'
+import { Plus, Trash2, Edit2, MessageSquare, Image as ImageIcon, X } from 'lucide-react'
 import { useAppStore, MessageTemplate } from '@/store/appStore'
+import {
+  TEMPLATE_PHOTO_MIMES,
+  type TemplatePhotoPayload,
+  templatePhotoDataUrl,
+  validateTemplatePhotoBytes,
+} from '@/lib/templatePhoto'
+
+const ACCEPT_IMAGES = TEMPLATE_PHOTO_MIMES.join(',')
+
+function fileToTemplatePhoto(
+  file: File,
+  onError: (msg: string) => void
+): Promise<TemplatePhotoPayload | null> {
+  return new Promise((resolve) => {
+    if (
+      !TEMPLATE_PHOTO_MIMES.includes(
+        file.type as (typeof TEMPLATE_PHOTO_MIMES)[number]
+      )
+    ) {
+      onError('Sadece JPG, PNG veya WEBP seçin.')
+      resolve(null)
+      return
+    }
+    const reader = new FileReader()
+    reader.onerror = () => {
+      onError('Dosya okunamadı.')
+      resolve(null)
+    }
+    reader.onload = () => {
+      const r = String(reader.result)
+      const comma = r.indexOf(',')
+      if (comma < 0) {
+        onError('Dosya okunamadı.')
+        resolve(null)
+        return
+      }
+      const dataHead = r.slice(0, comma)
+      const base64 = r.slice(comma + 1)
+      const m = dataHead.match(/^data:([^;]+)/i)
+      const mimeType = m?.[1] || file.type
+      if (
+        !TEMPLATE_PHOTO_MIMES.includes(
+          mimeType as (typeof TEMPLATE_PHOTO_MIMES)[number]
+        )
+      ) {
+        onError('Sadece JPG, PNG veya WEBP seçin.')
+        resolve(null)
+        return
+      }
+      try {
+        const bin = atob(base64)
+        const u8 = new Uint8Array(bin.length)
+        for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i)
+        const v = validateTemplatePhotoBytes(mimeType, u8)
+        if (!v.ok) {
+          onError(v.error)
+          resolve(null)
+          return
+        }
+        resolve({
+          fileName: file.name,
+          mimeType,
+          base64,
+        })
+      } catch {
+        onError('Görsel işlenemedi (çok büyük olabilir).')
+        resolve(null)
+      }
+    }
+    reader.readAsDataURL(file)
+  })
+}
 
 export default function MessagesPage() {
   const messageTemplates = useAppStore((state) => state.messageTemplates)
   const addMessageTemplate = useAppStore((state) => state.addMessageTemplate)
   const removeMessageTemplate = useAppStore((state) => state.removeMessageTemplate)
   const updateMessageTemplate = useAppStore((state) => state.updateMessageTemplate)
+  const pushToast = useAppStore((state) => state.pushToast)
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [content, setContent] = useState('')
+  const [mediaPhoto, setMediaPhoto] = useState<TemplatePhotoPayload | null>(null)
   const [antiSpamDelay, setAntiSpamDelay] = useState(false)
 
+  const hasMedia = Boolean(mediaPhoto)
+  const canSave = Boolean(name.trim() && (content.trim() || hasMedia))
+
   const handleAdd = () => {
-    if (!name.trim() || !content.trim()) return
+    if (!canSave) return
 
     const newTemplate: MessageTemplate = {
       id: Date.now().toString(),
       name: name.trim(),
       content: content.trim(),
+      mediaPhoto: mediaPhoto ?? undefined,
       antiSpamDelay: antiSpamDelay || undefined,
     }
 
     addMessageTemplate(newTemplate)
-    setName('')
-    setContent('')
-    setAntiSpamDelay(false)
+    resetForm()
     setShowAddModal(false)
   }
 
@@ -37,24 +115,41 @@ export default function MessagesPage() {
     setEditingId(template.id)
     setName(template.name)
     setContent(template.content)
+    setMediaPhoto(template.mediaPhoto ? { ...template.mediaPhoto } : null)
     setAntiSpamDelay(template.antiSpamDelay === true)
     setShowAddModal(true)
   }
 
   const handleUpdate = () => {
-    if (!name.trim() || !content.trim() || !editingId) return
+    if (!canSave || !editingId) return
 
     updateMessageTemplate(editingId, {
       name: name.trim(),
       content: content.trim(),
+      mediaPhoto: mediaPhoto ?? undefined,
       antiSpamDelay: antiSpamDelay || undefined,
     })
 
+    resetForm()
+    setShowAddModal(false)
+  }
+
+  const resetForm = () => {
     setName('')
     setContent('')
+    setMediaPhoto(null)
     setAntiSpamDelay(false)
     setEditingId(null)
-    setShowAddModal(false)
+  }
+
+  const onPickFile = () => fileInputRef.current?.click()
+
+  const onFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    const photo = await fileToTemplatePhoto(file, (msg) => pushToast(msg, 'error'))
+    if (photo) setMediaPhoto(photo)
   }
 
   const handleDelete = (id: string) => {
@@ -70,15 +165,12 @@ export default function MessagesPage() {
           <h2 className="text-4xl font-bold text-white mb-3 gradient-text tracking-tight">Mesaj şablonları</h2>
           <p className="text-white/50 text-base font-medium max-w-2xl">
             Tekrar kullanılacak metinleri adlandırın; zamanlayıcıda şablon seçerek aynı içeriği birden
-            çok gönderime bağlayın.
+            çok gönderime bağlayın. İsteğe bağlı olarak bir görsel de ekleyebilirsiniz.
           </p>
         </div>
         <button
           onClick={() => {
-            setEditingId(null)
-            setName('')
-            setContent('')
-            setAntiSpamDelay(false)
+            resetForm()
             setShowAddModal(true)
           }}
           className="btn-primary flex items-center gap-2 px-6 py-3 rounded-xl font-bold"
@@ -87,6 +179,14 @@ export default function MessagesPage() {
           Şablon Ekle
         </button>
       </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={ACCEPT_IMAGES}
+        className="hidden"
+        onChange={onFileChange}
+      />
 
       {messageTemplates.length === 0 ? (
         <div className="text-center py-24 surface-muted rounded-2xl shadow-2xl fade-in">
@@ -134,9 +234,22 @@ export default function MessagesPage() {
                   </button>
                 </div>
               </div>
-              <p className="text-white/70 whitespace-pre-wrap leading-relaxed relative z-10 font-medium">
-                {template.content}
-              </p>
+              {template.mediaPhoto && (
+                <div className="relative z-10 mb-4 max-h-40 rounded-xl overflow-hidden border border-white/10 bg-black/20">
+                  <img
+                    src={templatePhotoDataUrl(template.mediaPhoto)}
+                    alt=""
+                    className="w-full h-full max-h-40 object-contain"
+                  />
+                </div>
+              )}
+              {template.content ? (
+                <p className="text-white/70 whitespace-pre-wrap leading-relaxed relative z-10 font-medium">
+                  {template.content}
+                </p>
+              ) : (
+                <p className="text-white/40 text-sm relative z-10 italic">Yalnızca görsel</p>
+              )}
             </div>
           ))}
         </div>
@@ -144,7 +257,7 @@ export default function MessagesPage() {
 
       {showAddModal && (
         <div className="fixed inset-0 surface-modal-overlay backdrop-blur-md flex items-center justify-center z-50 p-4 fade-in">
-          <div className="surface-modal rounded-2xl p-8 w-full max-w-2xl shadow-2xl fade-in relative overflow-hidden">
+          <div className="surface-modal rounded-2xl p-8 w-full max-w-2xl shadow-2xl fade-in relative overflow-hidden max-h-[90vh] overflow-y-auto">
             <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -mr-32 -mt-32" />
             <div className="absolute bottom-0 left-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -ml-32 -mb-32" />
             
@@ -171,10 +284,51 @@ export default function MessagesPage() {
                 <textarea
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
-                  placeholder="Mesaj içeriğini buraya yazın..."
+                  placeholder="Mesaj içeriğini buraya yazın (görsel tek başına da kullanılabilir)..."
                   rows={8}
                   className="input-focus w-full px-4 py-3.5 rounded-xl text-white placeholder-white/30 focus:outline-none resize-none"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-white mb-3 tracking-tight">
+                  Görsel (opsiyonel)
+                </label>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={onPickFile}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold bg-white/10 hover:bg-white/15 text-white border border-white/10"
+                  >
+                    <ImageIcon size={18} />
+                    Dosya seç
+                  </button>
+                  {hasMedia && (
+                    <button
+                      type="button"
+                      onClick={() => setMediaPhoto(null)}
+                      className="inline-flex items-center gap-1.5 text-sm text-red-300/90 hover:text-red-200"
+                    >
+                      <X size={16} />
+                      Görseli kaldır
+                    </button>
+                  )}
+                </div>
+                {hasMedia && mediaPhoto && (
+                  <div className="mt-3 rounded-xl overflow-hidden border border-white/10 max-h-48 bg-black/20">
+                    <img
+                      src={templatePhotoDataUrl(mediaPhoto)}
+                      alt=""
+                      className="w-full max-h-48 object-contain"
+                    />
+                    <p className="text-[11px] text-white/45 px-2 py-1.5 break-all">
+                      {mediaPhoto.fileName}
+                    </p>
+                  </div>
+                )}
+                <p className="text-[11px] text-white/50 mt-2 leading-relaxed">
+                  En fazla 10MB, en-boy oranı en fazla 20:1, genişlik+yükseklik toplamı en fazla 10000. Veriler
+                  tarayıcınızda (localStorage) tutulur; çok büyük görseller kaydedilemeyebilir.
+                </p>
               </div>
               <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3.5 hover:bg-white/[0.05]">
                 <input
@@ -196,10 +350,7 @@ export default function MessagesPage() {
                 <button
                   onClick={() => {
                     setShowAddModal(false)
-                    setEditingId(null)
-                    setName('')
-                    setContent('')
-                    setAntiSpamDelay(false)
+                    resetForm()
                   }}
                   className="flex-1 px-4 py-3 bg-white/10 hover:bg-white/15 text-white rounded-xl font-bold border border-white/10 hover:border-white/20 transition-all"
                 >
@@ -207,7 +358,8 @@ export default function MessagesPage() {
                 </button>
                 <button
                   onClick={editingId ? handleUpdate : handleAdd}
-                  className="btn-primary flex-1 px-4 py-3 rounded-xl font-bold"
+                  disabled={!canSave}
+                  className="btn-primary flex-1 px-4 py-3 rounded-xl font-bold disabled:opacity-40 disabled:pointer-events-none"
                 >
                   {editingId ? 'Güncelle' : 'Ekle'}
                 </button>
@@ -219,4 +371,3 @@ export default function MessagesPage() {
     </div>
   )
 }
-

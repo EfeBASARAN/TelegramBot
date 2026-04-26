@@ -1,6 +1,7 @@
 // LocalStorage ile veri saklama ve yükleme
 
 import type { JoinedGroupInfo } from '@/lib/telegram'
+import type { TemplatePhotoPayload } from '@/lib/templatePhoto'
 
 const STORAGE_KEYS = {
   ACCOUNTS: 'telegram_accounts',
@@ -26,6 +27,8 @@ export interface StoredMessageTemplate {
   id: string
   content: string
   name: string
+  /** Opsiyonel: dosya seçiciyle yüklenen görsel (localStorage’da base64). */
+  mediaPhoto?: TemplatePhotoPayload
   antiSpamDelay?: boolean
 }
 

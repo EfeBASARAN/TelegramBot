@@ -5,6 +5,11 @@ import { returnBigInt } from 'telegram/Helpers'
 import { formatUserFacingTelegramError } from './telegramErrorMessages'
 import { liveLog, trunc } from '@/lib/botLiveLog'
 import { assertLicenseActive } from './licenseRuntime'
+import {
+  type TemplatePhotoPayload,
+  templatePhotoToCustomFile,
+  validateTemplatePhotoPayload,
+} from './templatePhoto'
 
 /** Gruplar / süper gruplar / kanallar listesi için özet bilgi */
 export interface JoinedGroupInfo {
@@ -534,7 +539,8 @@ class TelegramManager {
     sessionString?: string,
     phoneNumber?: string,
     apiId?: string,
-    apiHash?: string
+    apiHash?: string,
+    mediaPhoto?: TemplatePhotoPayload
   ): Promise<{ success: boolean; error?: string }> {
     const licErr = await this.requireLicenseOrError()
     if (licErr) {
@@ -772,10 +778,30 @@ class TelegramManager {
         messagePreview: message.substring(0, 50) + '...'
       })
       
-      console.log('📤 sendMessage API çağrısı yapılıyor...')
-      liveLog('info', 'Telegram API: messages.sendMessage çağrılıyor', `Hesap ${trunc(accountId, 16)} → ${trunc(cleanUsername, 48)}`)
-      const sendResult = await client.sendMessage(entity, { message })
-      console.log('📤 sendMessage API sonucu:', {
+      let sendResult: unknown
+      if (mediaPhoto?.base64) {
+        const mediaValidation = validateTemplatePhotoPayload(mediaPhoto)
+        if (!mediaValidation.ok) {
+          return { success: false, error: mediaValidation.error }
+        }
+        const upload = templatePhotoToCustomFile(mediaPhoto)
+        console.log('🖼️ Fotoğraf + mesaj gönderiliyor...')
+        liveLog(
+          'info',
+          'Telegram API: fotoğraf gönderimi çağrılıyor',
+          `Hesap ${trunc(accountId, 16)} → ${trunc(cleanUsername, 48)}`
+        )
+        sendResult = await client.sendFile(entity, {
+          file: upload,
+          caption: message?.trim() ? message : undefined,
+          forceDocument: false,
+        })
+      } else {
+        console.log('📤 sendMessage API çağrısı yapılıyor...')
+        liveLog('info', 'Telegram API: messages.sendMessage çağrılıyor', `Hesap ${trunc(accountId, 16)} → ${trunc(cleanUsername, 48)}`)
+        sendResult = await client.sendMessage(entity, { message })
+      }
+      console.log('📤 Telegram API sonucu:', {
         accountId,
         username,
         resultType: typeof sendResult,
@@ -829,7 +855,10 @@ class TelegramManager {
       
       console.log('✅ Mesaj başarıyla gönderildi:', accountId, '->', username)
       console.log('📨 ========== sendMessage BAŞARILI ==========')
-      liveLog('ok', 'Telegram: mesaj iletildi', `${trunc(cleanUsername, 64)} · ${message.length} karakter`)
+      const deliveryText = mediaPhoto?.base64
+        ? `foto+mesaj · ${message.length} karakter`
+        : `${message.length} karakter`
+      liveLog('ok', 'Telegram: mesaj iletildi', `${trunc(cleanUsername, 64)} · ${deliveryText}`)
 
       return { success: true }
     } catch (error: any) {
