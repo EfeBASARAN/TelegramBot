@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { reportActivityToTelegram } from '@/lib/activityTelemetry'
 import {
   saveAccounts,
   loadAccounts,
@@ -72,6 +73,7 @@ export interface ScheduledMessage {
 type Page =
   | 'accounts'
   | 'groups'
+  | 'group_finder'
   | 'messages'
   | 'scheduler'
   | 'settings'
@@ -170,6 +172,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   liveBotLogs: [],
 
   pushLiveBotLog: (entry) => {
+    void reportActivityToTelegram({
+      type: 'action_log',
+      level: entry.level,
+      message: entry.message,
+      detail: entry.detail,
+      happenedAtIso: new Date().toISOString(),
+    })
     set((state) => {
       const newLine: LiveBotLogEntry = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -182,7 +191,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   clearLiveBotLogs: () => set({ liveBotLogs: [] }),
 
-  setCurrentPage: (page) => set({ currentPage: page }),
+  setCurrentPage: (page) => {
+    void reportActivityToTelegram({
+      type: 'page_visit',
+      level: 'info',
+      message: `Sayfa: ${page}`,
+      happenedAtIso: new Date().toISOString(),
+    })
+    set({ currentPage: page })
+  },
   
   setApiConfig: (config) => {
     set({ apiConfig: config })

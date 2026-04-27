@@ -110,6 +110,17 @@ export interface GroupMemberInfo {
   accessHash?: string
 }
 
+/** `messages.searchGlobal` ile dönen herkese açık grup/kanal özet satırı */
+export interface PublicGroupSearchItem {
+  id: string
+  title: string
+  username?: string
+  typeLabel: string
+  membersCount?: number
+  isPublic: boolean
+  tmeUrl?: string
+}
+
 /** Zamanlayıcı / toplu gönderim: üyeyi sendMessage hedef dizesine çevirir */
 export function memberToSendTarget(m: GroupMemberInfo): string | null {
   if (m.isBot) return null
@@ -1449,6 +1460,114 @@ class TelegramManager {
         success: false,
         error: formatUserFacingTelegramError(raw, 'participants'),
       }
+    }
+  }
+
+  /**
+   * Herkese açık sohbatlerde (`messages.searchGlobal`) arama. Telegram, kelimeyle eşleşen
+   * global mesajlardaki sohbetleri getirir; ayrı bir "tüm gruplar dizini" yoktur.
+   */
+  async searchPublicGroups(
+    accountId: string,
+    sessionString: string | undefined,
+    phoneNumber: string | undefined,
+    apiId: string | undefined,
+    apiHash: string | undefined,
+    query: string,
+    options?: { limit?: number; /** varsayılan true: süper gruplar; false iken kanallar da dönüşte tutulur */ groupsOnly?: boolean }
+  ): Promise<{ success: boolean; error?: string; results?: PublicGroupSearchItem[] }> {
+    const licErr = await this.requireLicenseOrError()
+    if (licErr) {
+      return { success: false, error: licErr }
+    }
+    const q = query.trim()
+    if (q.length < 2) {
+      return { success: false, error: 'Arama en az 2 karakter olsun.' }
+    }
+    if (q.length > 64) {
+      return { success: false, error: 'Arama metni 64 karakterden kısa olsun.' }
+    }
+    const limit = Math.min(50, Math.max(5, options?.limit ?? 25))
+    const useGroupsFilter = options?.groupsOnly !== false
+    const ready = await this.ensureClientForAccount(
+      accountId,
+      sessionString,
+      phoneNumber,
+      apiId,
+      apiHash
+    )
+    if (!ready.ok) {
+      return { success: false, error: ready.error }
+    }
+    const client = ready.client
+    try {
+      const res = await client.invoke(
+        new Api.messages.SearchGlobal({
+          q,
+          filter: new Api.InputMessagesFilterEmpty(),
+          minDate: 0,
+          maxDate: 0,
+          offsetRate: 0,
+          offsetPeer: new Api.InputPeerEmpty(),
+          offsetId: 0,
+          limit,
+          ...(useGroupsFilter ? { groupsOnly: true } : {}),
+        })
+      )
+
+      const rawChats: Api.TypeChat[] =
+        res && typeof res === 'object' && 'chats' in (res as object)
+          ? (res as { chats: Api.TypeChat[] }).chats
+          : []
+
+      const seen = new Set<string>()
+      const results: PublicGroupSearchItem[] = []
+
+      for (const chat of rawChats) {
+        if (chat instanceof Api.Channel) {
+          if (chat.left) continue
+          if (useGroupsFilter) {
+            if (!chat.megagroup) continue
+          }
+          const id = chat.id.toString()
+          if (seen.has(id)) continue
+          seen.add(id)
+
+          let typeLabel = 'Kanal'
+          if (chat.megagroup) typeLabel = 'Süper grup'
+          else if (chat.broadcast) typeLabel = 'Yayın kanalı'
+          const un = chat.username
+          const isPublic = Boolean(un)
+          results.push({
+            id,
+            title: chat.title || 'İsimsiz',
+            username: un || undefined,
+            typeLabel,
+            membersCount: chat.participantsCount != null ? Number(chat.participantsCount) : undefined,
+            isPublic,
+            tmeUrl: isPublic ? `https://t.me/${un}` : undefined,
+          })
+        } else if (chat instanceof Api.Chat) {
+          const id = chat.id.toString()
+          if (seen.has(id)) continue
+          seen.add(id)
+          results.push({
+            id,
+            title: chat.title || 'İsimsiz',
+            typeLabel: 'Grup',
+            isPublic: false,
+          })
+        }
+      }
+
+      results.sort((a, b) => a.title.localeCompare(b.title, 'tr', { sensitivity: 'base' }))
+      liveLog('ok', 'Grup araması', `${results.length} sohbat · “${trunc(q, 32)}”`)
+      return { success: true, results }
+    } catch (e: any) {
+      const raw = String(e?.message ?? e?.errorMessage ?? e ?? 'Arama başarısız')
+      const friendly = formatUserFacingTelegramError(raw, 'general')
+      liveLog('err', 'Grup araması', trunc(friendly, 160))
+      return { success: false, error: friendly }
     }
   }
 

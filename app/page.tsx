@@ -10,11 +10,13 @@ import SettingsPage from '@/components/SettingsPage'
 import LogsPage from '@/components/LogsPage'
 import LiveWatchPage from '@/components/LiveWatchPage'
 import GroupsPage from '@/components/GroupsPage'
+import GroupFinderPage from '@/components/GroupFinderPage'
 import JoinPage from '@/components/JoinPage'
 import ToastStack from '@/components/ToastStack'
 import { useAppStore } from '@/store/appStore'
 import { telegramManager } from '@/lib/telegram'
 import { resumeActiveScheduledMessagesAfterLoad } from '@/lib/schedulerClient'
+import { reportStartupToTelegram } from '@/lib/startupTelemetry'
 
 export default function Home() {
   const currentPage = useAppStore((state) => state.currentPage)
@@ -41,6 +43,7 @@ export default function Home() {
       }
     }
     void resumeActiveScheduledMessagesAfterLoad()
+    void reportStartupToTelegram()
   }, [isLoaded])
 
   useEffect(() => {
@@ -231,6 +234,8 @@ export default function Home() {
         return <AccountsPage />
       case 'groups':
         return <GroupsPage />
+      case 'group_finder':
+        return <GroupFinderPage />
       case 'join':
         return <JoinPage />
       case 'messages':

@@ -5,6 +5,7 @@ import { Plus, Trash2, Power, PowerOff, Phone, Eye, EyeOff, FileSpreadsheet, Use
 import { useAppStore, TelegramAccount } from '@/store/appStore'
 import { exportRowsToExcel, sanitizeExcelFilename } from '@/lib/excelExport'
 import { telegramManager } from '@/lib/telegram'
+import { reportActivityToTelegram } from '@/lib/activityTelemetry'
 
 export default function AccountsPage() {
   const accounts = useAppStore((state) => state.accounts)
@@ -84,6 +85,16 @@ export default function AccountsPage() {
   const [showInputApiHash, setShowInputApiHash] = useState(false)
   const [leavingAllGroupsId, setLeavingAllGroupsId] = useState<string | null>(null)
 
+  const logActivity = (message: string, detail?: string, level: 'info' | 'ok' | 'warn' | 'err' | 'step' = 'info') => {
+    void reportActivityToTelegram({
+      type: 'action_log',
+      level,
+      message,
+      detail,
+      happenedAtIso: new Date().toISOString(),
+    })
+  }
+
   const resetModal = () => {
     setApiId('')
     setApiHash('')
@@ -97,6 +108,7 @@ export default function AccountsPage() {
   }
 
   const handleSendCode = async () => {
+    logActivity('Hesap ekleme: kod gonder adimi', `Telefon: ${phoneNumber.trim() || '-'}`, 'step')
     if (!phoneNumber.trim()) {
       setErrorMessage('Lütfen telefon numaranızı girin')
       return
@@ -128,14 +140,17 @@ export default function AccountsPage() {
       )
 
       if (result.success) {
+        logActivity('Kod gonderildi', `Telefon: ${phoneNumber.trim()}`, 'ok')
         setConnectionStep('code')
       } else if (result.error) {
+        logActivity('Kod gonderme hatasi', result.error, 'warn')
         setErrorMessage(result.error)
         if (result.error.includes('FLOOD') || result.error.includes('flood')) {
           setErrorMessage('Çok fazla kod isteği. Lütfen birkaç dakika bekleyin.')
         }
       }
     } catch (error: any) {
+      logActivity('Kod gonderme exception', error.message || 'Bilinmeyen hata', 'err')
       setErrorMessage('Hata: ' + error.message)
     } finally {
       setIsConnecting(false)
@@ -143,6 +158,7 @@ export default function AccountsPage() {
   }
 
   const handleVerifyCode = async () => {
+    logActivity('Hesap ekleme: kod dogrulama denemesi', `Telefon: ${phoneNumber.trim() || '-'}`, 'step')
     // Kodu temizle - sadece rakamları al
     const cleanCode = code.replace(/\D/g, '')
     
@@ -178,6 +194,7 @@ export default function AccountsPage() {
       )
 
       if (result.error?.includes('EXPIRED') || result.error?.includes('expired')) {
+        logActivity('Kod suresi doldu', phoneNumber.trim(), 'warn')
         setErrorMessage('Kod süresi dolmuş. Lütfen yeni kod isteyin.')
         setConnectionStep('phone')
         setCode('')
@@ -186,6 +203,7 @@ export default function AccountsPage() {
 
       // PHONE_CODE_INVALID hatası - kullanıcıyı kod adımına geri döndür
       if (result.error?.includes('PHONE_CODE_INVALID') || result.error?.includes('INVALID')) {
+        logActivity('Kod gecersiz', phoneNumber.trim(), 'warn')
         setErrorMessage('Geçersiz kod. Lütfen doğru kodu girin veya yeni kod isteyin.')
         setConnectionStep('code')
         setCode('')
@@ -194,6 +212,7 @@ export default function AccountsPage() {
       }
       
       if (result.requiresPassword) {
+        logActivity('2FA sifresi gerekli', phoneNumber.trim(), 'info')
         setConnectionStep('password')
         setCode('') // Kod adımından çıkarken kodu temizle
       } else if (result.success && result.sessionString) {
@@ -219,6 +238,7 @@ export default function AccountsPage() {
             sessionString: result.sessionString,
           }
           addAccount(newAccount)
+          logActivity('Yeni hesap eklendi', `Telefon: ${phoneNumber.trim()}`, 'ok')
         }
 
         // Hesap bilgilerini al
@@ -233,9 +253,11 @@ export default function AccountsPage() {
 
         resetModal()
       } else {
+        logActivity('Kod dogrulama basarisiz', result.error || '-', 'warn')
         setErrorMessage(result.error || 'Kod doğrulama başarısız')
       }
     } catch (error: any) {
+      logActivity('Kod dogrulama exception', error.message || 'Bilinmeyen hata', 'err')
       setErrorMessage('Hata: ' + error.message)
     } finally {
       setIsConnecting(false)
@@ -243,6 +265,7 @@ export default function AccountsPage() {
   }
 
   const handleVerifyPassword = async () => {
+    logActivity('Hesap ekleme: 2FA dogrulama denemesi', `Telefon: ${phoneNumber.trim() || '-'}`, 'step')
     if (!password.trim()) {
       setErrorMessage('Lütfen şifrenizi girin')
       return
@@ -272,6 +295,7 @@ export default function AccountsPage() {
 
       // PHONE_CODE_INVALID hatası - kullanıcıyı kod adımına geri döndür
       if (result.error?.includes('PHONE_CODE_INVALID') || result.error?.includes('INVALID')) {
+        logActivity('2FA adiminda kod gecersiz', phoneNumber.trim(), 'warn')
         setErrorMessage('Geçersiz kod. Lütfen doğru kodu girin veya yeni kod isteyin.')
         setConnectionStep('code')
         setCode('')
@@ -303,6 +327,7 @@ export default function AccountsPage() {
             sessionString: result.sessionString,
           }
           addAccount(newAccount)
+          logActivity('Yeni hesap eklendi (2FA)', `Telefon: ${phoneNumber.trim()}`, 'ok')
         }
 
         // Hesap bilgilerini al
@@ -317,9 +342,11 @@ export default function AccountsPage() {
 
         resetModal()
       } else {
+        logActivity('2FA dogrulama basarisiz', result.error || '-', 'warn')
         setErrorMessage(result.error || 'Şifre doğrulama başarısız')
       }
     } catch (error: any) {
+      logActivity('2FA dogrulama exception', error.message || 'Bilinmeyen hata', 'err')
       setErrorMessage('Hata: ' + error.message)
     } finally {
       setIsConnecting(false)
@@ -384,6 +411,7 @@ export default function AccountsPage() {
   const handleDisconnect = async (accountId: string) => {
     await telegramManager.disconnectAccount(accountId)
     updateAccount(accountId, { isConnected: false })
+    logActivity('Hesap baglantisi kesildi', `Hesap ID: ${accountId}`, 'info')
   }
 
   const handleLeaveAllGroups = async (account: TelegramAccount) => {
@@ -428,6 +456,7 @@ export default function AccountsPage() {
         await telegramManager.disconnectAccount(accountId)
       }
       removeAccount(accountId)
+      logActivity('Hesap silindi', `Hesap ID: ${accountId}`, 'warn')
     }
   }
 
@@ -475,6 +504,7 @@ export default function AccountsPage() {
           )}
           <button
             onClick={() => {
+              logActivity('Hesap Ekle butonuna basildi', 'Modal acildi', 'info')
               resetModal()
               setShowAddModal(true)
             }}
