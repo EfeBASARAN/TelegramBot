@@ -42,3 +42,6 @@ next-env.d.ts
 *.session
 sessions/
 
+# uygulama verileri (hesaplar, şablonlar, planlar, loglar)
+/data/
+

@@ -162,7 +162,7 @@ export default function LogsPage() {
           <h2 className="text-4xl font-bold text-white mb-3 gradient-text tracking-tight">Gönderim günlüğü</h2>
           <p className="text-white/50 text-base font-medium max-w-2xl">
             Her kayıtta özet, teknik detay ve ne yapılabileceği gösterilir. Hesap ve alıcıya göre gruplanır; veriler
-            yalnızca bu tarayıcıda (localStorage) tutulur.
+            data/error-logs.json dosyasında saklanır.
           </p>
         </div>
         {errorLogs.length > 0 && (

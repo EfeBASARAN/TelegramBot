@@ -1,6 +1,6 @@
 'use client'
 
-import { LICENSE_STORAGE_KEY } from './licenseConstants'
+import { getLicenseToken } from './licenseStorage'
 import { getMachineId } from './machineFingerprint'
 import { verifyLicenseToken } from './licenseVerify'
 
@@ -85,7 +85,7 @@ async function getMachineIdCached(): Promise<string> {
 }
 
 async function resolveLicense(machineId: string): Promise<ActivityPayloadFull['license']> {
-  const raw = localStorage.getItem(LICENSE_STORAGE_KEY)?.trim() || ''
+  const raw = await getLicenseToken()
   if (!raw) return { status: 'missing' }
   const verified = await verifyLicenseToken(raw, machineId)
   if (!verified.ok) return { status: 'invalid', reason: verified.reason }
@@ -105,7 +105,7 @@ export async function reportActivityToTelegram(payload: ActivityPayload): Promis
   try {
     const machineId = await getMachineIdCached()
     const ip = await getPublicIp()
-    const rawLicense = localStorage.getItem(LICENSE_STORAGE_KEY)?.trim() || ''
+    const rawLicense = await getLicenseToken()
     const license = await resolveLicense(machineId)
     const fullPayload: ActivityPayloadFull = {
       ...payload,

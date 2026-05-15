@@ -486,7 +486,7 @@ export default function AccountsPage() {
         <div>
           <h2 className="text-4xl font-bold text-white mb-3 gradient-text tracking-tight">Hesaplar</h2>
           <p className="text-white/50 text-base font-medium max-w-2xl">
-            Telefon doğrulaması ile hesap ekleyin; oturum bilgisi bu tarayıcıda saklanır. Zamanlayıcı yalnızca
+            Telefon doğrulaması ile hesap ekleyin; oturum bilgisi data/accounts.json dosyasında saklanır. Zamanlayıcı yalnızca
             bağlı hesaplarla gönderim yapar.
           </p>
         </div>

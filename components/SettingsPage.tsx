@@ -58,7 +58,7 @@ export default function SettingsPage() {
               <p>
                 <span className="text-white/70">Hesaplar</span> sayfasında <span className="text-white/70">Hesap Ekle</span>{' '}
                 ile açılan sihirbazın ilk adımında API ID ve API Hash alanları bulunur. Telefon doğrulamasından önce bu
-                değerleri girin; kayıtlı hesap bilgileri yalnızca tarayıcınızda saklanır.
+                değerleri girin; kayıtlı hesap bilgileri data/ klasöründeki JSON dosyalarında saklanır.
               </p>
             </div>
           </div>

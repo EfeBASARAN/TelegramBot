@@ -8,7 +8,7 @@ import { useAppStore, type ErrorLog } from '@/store/appStore'
 /** İki tur arası bekleme (ms); bitiş zamanına kadar tekrarlayan planlarda kullanılır */
 const BETWEEN_TOURS_MS = 4000
 
-/** scheduleMessage için ortak geri çağrılar (ilerleme anahtarları localStorage ile kalıcı) */
+/** scheduleMessage için ortak geri çağrılar (ilerleme anahtarları JSON dosyasında kalıcı) */
 export function getSchedulerScheduleMessageArgs() {
   const getState = () => useAppStore.getState()
 

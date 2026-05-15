@@ -53,7 +53,7 @@ export function buildSchedulerErrorLogParts(
 
   let summary = 'Gönderim başarısız'
   let hint =
-    'Alıcı adını, özel liste formatını veya hesap oturumunu kontrol edin. Kayıtlar yalnızca bu tarayıcıda tutulur.'
+    'Alıcı adını, özel liste formatını veya hesap oturumunu kontrol edin. Kayıtlar data/error-logs.json dosyasında tutulur.'
 
   if (kind === 'rate_limit') {
     summary = 'Çok hızlı istek (Telegram sınırı)'

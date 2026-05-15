@@ -1,8 +1,12 @@
 'use client'
 
 import { useCallback, useEffect, useState, type CSSProperties } from 'react'
-import { LICENSE_STORAGE_KEY } from '@/lib/licenseConstants'
 import { getMachineId } from '@/lib/machineFingerprint'
+import {
+  clearLicenseToken,
+  getLicenseToken,
+  setLicenseToken,
+} from '@/lib/licenseStorage'
 import { verifyLicenseToken } from '@/lib/licenseVerify'
 
 type GateState =
@@ -24,19 +28,19 @@ export default function LicenseGate({ children }: { children: React.ReactNode })
       return
     }
 
-    const raw = typeof window !== 'undefined' ? localStorage.getItem(LICENSE_STORAGE_KEY) : null
-    if (!raw?.trim()) {
+    const raw = await getLicenseToken()
+    if (!raw) {
       setState({ status: 'activate', machineId: mid })
       return
     }
 
-    const result = await verifyLicenseToken(raw.trim(), mid)
+    const result = await verifyLicenseToken(raw, mid)
     if (result.ok) {
       setState({ status: 'ok' })
       return
     }
 
-    localStorage.removeItem(LICENSE_STORAGE_KEY)
+    await clearLicenseToken()
     if (result.reason.includes('süresi dolmuş')) {
       setState({
         status: 'blocked',
@@ -53,20 +57,19 @@ export default function LicenseGate({ children }: { children: React.ReactNode })
     void checkStored()
   }, [checkStored])
 
-  /** Süre doldu anında kilitle */
   useEffect(() => {
     if (state.status !== 'ok') return
     const id = window.setInterval(() => {
       void (async () => {
         const mid = await getMachineId()
-        const raw = localStorage.getItem(LICENSE_STORAGE_KEY)
-        if (!raw?.trim()) {
+        const raw = await getLicenseToken()
+        if (!raw) {
           setState({ status: 'activate', machineId: mid })
           return
         }
-        const result = await verifyLicenseToken(raw.trim(), mid)
+        const result = await verifyLicenseToken(raw, mid)
         if (!result.ok) {
-          localStorage.removeItem(LICENSE_STORAGE_KEY)
+          await clearLicenseToken()
           setState({
             status: 'blocked',
             message:
@@ -93,7 +96,7 @@ export default function LicenseGate({ children }: { children: React.ReactNode })
       setErr(result.reason)
       return
     }
-    localStorage.setItem(LICENSE_STORAGE_KEY, token)
+    await setLicenseToken(token)
     setState({ status: 'ok' })
   }
 
@@ -105,7 +108,6 @@ export default function LicenseGate({ children }: { children: React.ReactNode })
     }
   }
 
-  /** Tailwind/CSS gecikirse bile metin görünsün (standalone paketlerde güvenlik) */
   const shellStyle: CSSProperties = {
     position: 'relative',
     zIndex: 10,
@@ -146,9 +148,9 @@ export default function LicenseGate({ children }: { children: React.ReactNode })
         <div className="max-w-lg w-full rounded-2xl border border-white/10 bg-zinc-900/90 p-8 shadow-2xl">
           <h1 className="text-2xl font-bold mb-2">Lisans gerekli</h1>
           <p className="text-white/55 text-sm mb-6 leading-relaxed">
-            Bu kopya yalnızca bu bilgisayarda çalışır. Aşağıdaki <strong>makine kodunu</strong> kopyalayıp
-            satıcıya gönderin (ör. WhatsApp). Size gönderilen lisans anahtarını yapıştırıp
-            &quot;Etkinleştir&quot; deyin.
+            Makine kodu bu bilgisayarın donanımına göredir; tarayıcı değiştirseniz de aynı kalır. Aşağıdaki{' '}
+            <strong>makine kodunu</strong> kopyalayıp satıcıya gönderin (ör. WhatsApp). Size gönderilen lisans
+            anahtarını yapıştırıp &quot;Etkinleştir&quot; deyin.
           </p>
 
           <div className="mb-4">

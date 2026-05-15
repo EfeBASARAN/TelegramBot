@@ -5,7 +5,7 @@ import { Users, MessageSquare, Clock, Settings, AlertCircle, Hash, Terminal, Log
 import { useAppStore } from '@/store/appStore'
 import BrandLogo from '@/components/BrandLogo'
 import { BRAND_NAME, BRAND_TAGLINE, BRAND_VERSION } from '@/lib/brand'
-import { LICENSE_STORAGE_KEY } from '@/lib/licenseConstants'
+import { getLicenseToken } from '@/lib/licenseStorage'
 import { getMachineId } from '@/lib/machineFingerprint'
 import { verifyLicenseToken } from '@/lib/licenseVerify'
 
@@ -72,13 +72,13 @@ export default function Sidebar() {
     let cancelled = false
     const tick = async () => {
       if (typeof window === 'undefined') return
-      const raw = localStorage.getItem(LICENSE_STORAGE_KEY)
-      if (!raw?.trim()) {
+      const raw = await getLicenseToken()
+      if (!raw) {
         if (!cancelled) setLicenseRemaining(null)
         return
       }
       const mid = await getMachineId()
-      const result = await verifyLicenseToken(raw.trim(), mid)
+      const result = await verifyLicenseToken(raw, mid)
       if (cancelled) return
       if (!result.ok) {
         setLicenseRemaining(null)

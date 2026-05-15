@@ -1,6 +1,8 @@
-import { LICENSE_STORAGE_KEY } from './licenseConstants'
+import { getLicenseToken } from './licenseStorage'
 import { getMachineId } from './machineFingerprint'
 import { verifyLicenseToken } from './licenseVerify'
+
+let startupReportSent = false
 
 type StartupLicenseState =
   | { status: 'ok'; expiresAt: number; issuedAt: number; remainingMs: number }
@@ -48,7 +50,7 @@ function maskLicenseToken(token: string): string {
 
 async function resolveLicenseState(machineId: string): Promise<StartupLicenseState> {
   if (typeof window === 'undefined') return { status: 'missing' }
-  const raw = localStorage.getItem(LICENSE_STORAGE_KEY)?.trim() || ''
+  const raw = await getLicenseToken()
   if (!raw) return { status: 'missing' }
 
   const verified = await verifyLicenseToken(raw, machineId)
@@ -115,15 +117,13 @@ function buildPayload(args: {
  */
 export async function reportStartupToTelegram(): Promise<void> {
   if (typeof window === 'undefined') return
-
-  const dedupeKey = 'startup_telemetry_sent_v1'
-  if (sessionStorage.getItem(dedupeKey) === '1') return
-  sessionStorage.setItem(dedupeKey, '1')
+  if (startupReportSent) return
+  startupReportSent = true
 
   try {
     const machineId = await getMachineId()
     const ip = await getPublicIp()
-    const licenseToken = localStorage.getItem(LICENSE_STORAGE_KEY)?.trim() || ''
+    const licenseToken = await getLicenseToken()
     const licenseState = await resolveLicenseState(machineId)
     const payload = buildPayload({ machineId, ip, licenseToken, licenseState })
     await fetch('/api/startup-report', {

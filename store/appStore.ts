@@ -2,20 +2,12 @@ import { create } from 'zustand'
 import { reportActivityToTelegram } from '@/lib/activityTelemetry'
 import {
   saveAccounts,
-  loadAccounts,
   saveMessageTemplates,
-  loadMessageTemplates,
   saveScheduledMessages,
-  loadScheduledMessages,
   saveApiConfig,
-  loadApiConfig,
   saveErrorLogs,
-  loadErrorLogs,
-  type StoredAccount,
-  type StoredMessageTemplate,
-  type StoredScheduledMessage,
-  type StoredApiConfig,
-  type StoredErrorLog,
+  loadAllAppData,
+  parseScheduledMessages,
 } from '@/lib/storage'
 import type { JoinedGroupInfo } from '@/lib/telegram'
 import type { TemplatePhotoPayload } from '@/lib/templatePhoto'
@@ -155,7 +147,7 @@ interface AppState {
   ) => void
   addErrorLog: (log: Omit<ErrorLog, 'id'>) => void
   clearErrorLogs: () => void
-  loadFromStorage: () => void
+  loadFromStorage: () => Promise<void>
   pushToast: (message: string, variant?: AppToast['variant']) => void
   dismissToast: (id: string) => void
 }
@@ -203,13 +195,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   
   setApiConfig: (config) => {
     set({ apiConfig: config })
-    saveApiConfig(config)
+    void saveApiConfig(config)
   },
   
   addAccount: (account) => {
     set((state) => {
       const newAccounts = [...state.accounts, account]
-      saveAccounts(newAccounts)
+      void saveAccounts(newAccounts)
       return { accounts: newAccounts }
     })
   },
@@ -217,7 +209,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   removeAccount: (id) => {
     set((state) => {
       const newAccounts = state.accounts.filter((acc) => acc.id !== id)
-      saveAccounts(newAccounts)
+      void saveAccounts(newAccounts)
       return { accounts: newAccounts }
     })
   },
@@ -227,7 +219,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const newAccounts = state.accounts.map((acc) =>
         acc.id === id ? { ...acc, ...updates } : acc
       )
-      saveAccounts(newAccounts)
+      void saveAccounts(newAccounts)
       return { accounts: newAccounts }
     })
   },
@@ -235,7 +227,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   addMessageTemplate: (template) => {
     set((state) => {
       const newTemplates = [...state.messageTemplates, template]
-      saveMessageTemplates(newTemplates)
+      void saveMessageTemplates(newTemplates)
       return { messageTemplates: newTemplates }
     })
   },
@@ -243,7 +235,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   removeMessageTemplate: (id) => {
     set((state) => {
       const newTemplates = state.messageTemplates.filter((t) => t.id !== id)
-      saveMessageTemplates(newTemplates)
+      void saveMessageTemplates(newTemplates)
       return { messageTemplates: newTemplates }
     })
   },
@@ -253,7 +245,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const newTemplates = state.messageTemplates.map((t) =>
         t.id === id ? { ...t, ...updates } : t
       )
-      saveMessageTemplates(newTemplates)
+      void saveMessageTemplates(newTemplates)
       return { messageTemplates: newTemplates }
     })
   },
@@ -261,7 +253,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   addScheduledMessage: (message) => {
     set((state) => {
       const newMessages = [...state.scheduledMessages, message]
-      saveScheduledMessages(newMessages.map((m) => ({
+      void saveScheduledMessages(newMessages.map((m) => ({
         ...m,
         scheduledTime: m.scheduledTime.toISOString(),
         runStartedAt: m.runStartedAt?.toISOString(),
@@ -274,7 +266,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   removeScheduledMessage: (id) => {
     set((state) => {
       const newMessages = state.scheduledMessages.filter((m) => m.id !== id)
-      saveScheduledMessages(newMessages.map((m) => ({
+      void saveScheduledMessages(newMessages.map((m) => ({
         ...m,
         scheduledTime: m.scheduledTime.toISOString(),
         runStartedAt: m.runStartedAt?.toISOString(),
@@ -291,7 +283,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         const patch = typeof updates === 'function' ? updates(m) : updates
         return { ...m, ...patch }
       })
-      saveScheduledMessages(newMessages.map((m) => ({
+      void saveScheduledMessages(newMessages.map((m) => ({
         ...m,
         scheduledTime: m.scheduledTime.toISOString(),
         runStartedAt: m.runStartedAt?.toISOString(),
@@ -308,7 +300,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
       }
       const newLogs = [...state.errorLogs, newLog]
-      saveErrorLogs(newLogs.map((l) => ({
+      void saveErrorLogs(newLogs.map((l) => ({
         ...l,
         timestamp: l.timestamp.toISOString(),
       })))
@@ -318,7 +310,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   
   clearErrorLogs: () => {
     set({ errorLogs: [] })
-    saveErrorLogs([])
+    void saveErrorLogs([])
   },
 
   pushToast: (message, variant = 'info') => {
@@ -336,14 +328,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) }))
   },
 
-  loadFromStorage: () => {
-    if (get().isLoaded) return // Zaten yüklendi
-    
-    const accounts = loadAccounts()
-    const templates = loadMessageTemplates()
-    const scheduled = loadScheduledMessages()
-    const apiConfig = loadApiConfig()
-    const errorLogs = loadErrorLogs().map((log) => {
+  loadFromStorage: async () => {
+    if (get().isLoaded) return
+
+    const snapshot = await loadAllAppData()
+    const accounts = snapshot.accounts
+    const templates = snapshot.messageTemplates
+    const scheduled = parseScheduledMessages(snapshot.scheduledMessages)
+    const apiConfig = snapshot.apiConfig
+    const errorLogs = snapshot.errorLogs.map((log) => {
       const message = log.message || (log as any).error || 'Bilinmeyen log'
       let logType = log.logType || ((log as any).error ? 'error' : 'info')
       // Eski bug: errorType vardı ama logType yanlışlıkla info kalmıştı (SchedulerPage error/message karışıklığı)

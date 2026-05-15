@@ -327,7 +327,7 @@ export default function MessagesPage() {
                 )}
                 <p className="text-[11px] text-white/50 mt-2 leading-relaxed">
                   En fazla 10MB, en-boy oranı en fazla 20:1, genişlik+yükseklik toplamı en fazla 10000. Veriler
-                  tarayıcınızda (localStorage) tutulur; çok büyük görseller kaydedilemeyebilir.
+                  proje klasöründeki data/*.json dosyalarında tutulur; çok büyük görseller kaydedilemeyebilir.
                 </p>
               </div>
               <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3.5 hover:bg-white/[0.05]">

@@ -53,7 +53,7 @@ AKIŞ (ÖZET)
 
 --------------------------------------------------------------------------------
 6) GÜVENLİK
-   Lisans tarayıcıda doğrulanır; müşteri JS dosyalarını düzenleyerek süreyi uzatmaya
+   Lisans data/license.json dosyasında tutulur ve doğrulanır; müşteri JS dosyalarını düzenleyerek süreyi uzatmaya
    çalışabilir — bu tür uygulamalarda %100 dosya şifreleme mümkün değildir (anahtar yine
    pakette olur). Yapılanlar: üretim build’inde istemci paketleri obfuscate edilir; ayrıca
    Telegram bağlantısı / mesaj / zamanlayıcı yollarında lisans tekrar doğrulanır (sadece

@@ -25,9 +25,8 @@ export default function Home() {
   const mouseGlowRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    // Sayfa yüklendiğinde localStorage'dan verileri yükle
     if (!isLoaded) {
-      loadFromStorage()
+      void loadFromStorage()
     }
   }, [isLoaded, loadFromStorage])
 
