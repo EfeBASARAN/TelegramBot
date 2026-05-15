@@ -2,11 +2,7 @@
 
 import { useCallback, useEffect, useState, type CSSProperties } from 'react'
 import { getMachineId } from '@/lib/machineFingerprint'
-import {
-  clearLicenseToken,
-  getLicenseToken,
-  setLicenseToken,
-} from '@/lib/licenseStorage'
+import { getLicenseToken, setLicenseToken } from '@/lib/licenseStorage'
 import { verifyLicenseToken } from '@/lib/licenseVerify'
 
 type GateState =
@@ -40,15 +36,16 @@ export default function LicenseGate({ children }: { children: React.ReactNode })
       return
     }
 
-    await clearLicenseToken()
     if (result.reason.includes('süresi dolmuş')) {
       setState({
         status: 'blocked',
         message:
-          'Lisans süresi doldu. Program kullanılamaz. Yeni lisans için satıcıyla iletişime geçin.',
+          'Lisans süresi doldu. Program kullanılamaz. Satıcıdan bu makine kodu için yeni anahtar isteyin.',
       })
       return
     }
+
+    setPaste(raw)
     setState({ status: 'activate', machineId: mid })
     setErr(result.reason)
   }, [])
@@ -69,12 +66,11 @@ export default function LicenseGate({ children }: { children: React.ReactNode })
         }
         const result = await verifyLicenseToken(raw, mid)
         if (!result.ok) {
-          await clearLicenseToken()
           setState({
             status: 'blocked',
             message:
               result.reason.includes('süresi') || result.reason.includes('dolmuş')
-                ? 'Lisans süresi doldu. Program kullanılamaz.'
+                ? 'Lisans süresi doldu. Program kullanılamaz. Yeni lisans anahtarı gerekir.'
                 : result.reason,
           })
         }
